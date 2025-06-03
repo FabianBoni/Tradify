@@ -28,6 +28,20 @@ def download_market_data(symbol, start_date, end_date, interval='1d', api_key=No
         if data.empty:
             raise ValueError(f"No data available for {symbol}")
         
+        # Ensure consistent column naming for ML processing
+        column_mapping = {
+            'Open': 'open',
+            'High': 'high', 
+            'Low': 'low',
+            'Close': 'close',
+            'Volume': 'volume'
+        }
+        
+        # Rename columns if they exist in uppercase
+        for old_col, new_col in column_mapping.items():
+            if old_col in data.columns:
+                data = data.rename(columns={old_col: new_col})
+        
         print(f"✅ Successfully downloaded {len(data)} data points")
         return data
         
@@ -157,195 +171,102 @@ def fetch_training_data(symbol, start_date, end_date, interval='1h', save_path=N
 
 def create_comprehensive_features(data):
     """
-    Create comprehensive feature engineering pipeline with 14 categories
+    Create comprehensive features from OHLCV data
     """
-    df = data.copy()
-    
-    # Safety function for division
-    def safe_divide(a, b, default=0.0):
-        return np.where(np.abs(b) < 0.0001, default, a / b)
-    
-    # 1. Basic Price Action Features
-    df['price_change_pct'] = df['Close'].pct_change() * 100
-    df['candle_body'] = abs(df['Close'] - df['Open'])
-    df['candle_upper_shadow'] = df['High'] - np.maximum(df['Open'], df['Close'])
-    df['candle_lower_shadow'] = np.minimum(df['Open'], df['Close']) - df['Low']
-    
-    # Range-based ratios
-    candle_range = df['High'] - df['Low']
-    df['body_to_range'] = safe_divide(df['candle_body'], candle_range)
-    df['upper_shadow_to_range'] = safe_divide(df['candle_upper_shadow'], candle_range)
-    df['lower_shadow_to_range'] = safe_divide(df['candle_lower_shadow'], candle_range)
-    
-    # Price ratios with clipping
-    df['hl_ratio'] = np.clip(safe_divide(df['High'], df['Low'], 1.0), 0.5, 2.0)
-    df['oc_ratio'] = np.clip(safe_divide(df['Open'], df['Close'], 1.0), 0.8, 1.2)
-    df['vol_price_ratio'] = safe_divide(df['Volume'], df['Close'])
-    
-    # 2. Moving Averages (SMA & EMA)
-    windows = [5, 10, 20, 50, 100, 200]
-    for window in windows:
-        # SMA
-        df[f'sma_{window}'] = df['Close'].rolling(window).mean()
-        df[f'dist_sma_{window}'] = df['Close'] - df[f'sma_{window}']
-        df[f'dist_sma_{window}_pct'] = np.clip(
-            safe_divide(df[f'dist_sma_{window}'], df[f'sma_{window}']) * 100, -50, 50
-        )
+    try:
+        df = data.copy()
         
-        # EMA
-        df[f'ema_{window}'] = df['Close'].ewm(span=window).mean()
-        df[f'dist_ema_{window}'] = df['Close'] - df[f'ema_{window}']
-        df[f'dist_ema_{window}_pct'] = np.clip(
-            safe_divide(df[f'dist_ema_{window}'], df[f'ema_{window}']) * 100, -50, 50
-        )
-    
-    # 3. Momentum Indicators
-    rsi_windows = [7, 14, 21, 30]
-    for window in rsi_windows:
-        df[f'rsi_{window}'] = ta.momentum.RSIIndicator(df['Close'], window).rsi()
-    
-    # MACD
-    macd_indicator = ta.trend.MACD(df['Close'])
-    df['macd'] = macd_indicator.macd()
-    df['macd_signal'] = macd_indicator.macd_signal()
-    df['macd_histogram'] = macd_indicator.macd_diff()
-    
-    # Stochastic
-    stoch = ta.momentum.StochasticOscillator(df['High'], df['Low'], df['Close'])
-    df['stoch_k'] = stoch.stoch()
-    df['stoch_d'] = stoch.stoch_signal()
-    
-    # Williams %R
-    df['williams_r'] = ta.momentum.WilliamsRIndicator(df['High'], df['Low'], df['Close']).williams_r()
-    
-    # Ultimate Oscillator
-    df['ui'] = ta.momentum.UltimateOscillator(df['High'], df['Low'], df['Close']).ultimate_oscillator()
-    
-    # Rate of Change
-    roc_periods = [5, 10, 20]
-    for period in roc_periods:
-        df[f'roc_{period}'] = ta.momentum.ROCIndicator(df['Close'], period).roc()
-    
-    # 4. Volatility Indicators
-    # Bollinger Bands
-    bb = ta.volatility.BollingerBands(df['Close'])
-    df['bb_upper'] = bb.bollinger_hband()
-    df['bb_lower'] = bb.bollinger_lband()
-    df['bb_middle'] = bb.bollinger_mavg()
-    df['bb_width'] = df['bb_upper'] - df['bb_lower']
-    df['bb_position'] = safe_divide(df['Close'] - df['bb_lower'], df['bb_width'])
-    
-    # ATR
-    df['atr'] = ta.volatility.AverageTrueRange(df['High'], df['Low'], df['Close']).average_true_range()
-    df['atr_ratio'] = safe_divide(df['atr'], df['Close'])
-    
-    # Donchian Channels
-    dc = ta.volatility.DonchianChannel(df['High'], df['Low'], df['Close'])
-    df['dc_upper'] = dc.donchian_channel_hband()
-    df['dc_lower'] = dc.donchian_channel_lband()
-    df['dc_middle'] = dc.donchian_channel_mband()
-    df['dc_wband'] = dc.donchian_channel_wband()
-    df['dc_pband'] = dc.donchian_channel_pband()
-    
-    # Rolling volatility
-    vol_windows = [5, 10, 20, 50]
-    for window in vol_windows:
-        df[f'volatility_{window}d'] = df['Close'].rolling(window).std()
-    
-    # 5. Volume Indicators
-    df['vpt'] = ta.volume.VolumePriceTrendIndicator(df['Close'], df['Volume']).volume_price_trend()
-    df['obv'] = ta.volume.OnBalanceVolumeIndicator(df['Close'], df['Volume']).on_balance_volume()
-    
-    vol_windows = [5, 10, 20, 50]
-    for window in vol_windows:
-        df[f'vol_sma_{window}'] = df['Volume'].rolling(window).mean()
-        df[f'vol_ratio_{window}'] = safe_divide(df['Volume'], df[f'vol_sma_{window}'])
-    
-    # 6. Trend Indicators
-    # ADX
-    adx = ta.trend.ADXIndicator(df['High'], df['Low'], df['Close'])
-    df['adx'] = adx.adx()
-    df['adx_pos'] = adx.adx_pos()
-    df['adx_neg'] = adx.adx_neg()
-    
-    # CCI
-    df['cci'] = ta.trend.CCIIndicator(df['High'], df['Low'], df['Close']).cci()
-    
-    # Parabolic SAR
-    psar = ta.trend.PSARIndicator(df['High'], df['Low'], df['Close'])
-    df['psar'] = psar.psar()
-    df['psar_up'] = psar.psar_up()
-    df['psar_down'] = psar.psar_down()
-    
-    # 7. Lag Features
-    lag_periods = [1, 2, 3, 5, 10]
-    for lag in lag_periods:
-        df[f'close_lag_{lag}'] = df['Close'].shift(lag)
-        df[f'vol_lag_{lag}'] = df['Volume'].shift(lag)
-        df[f'return_lag_{lag}'] = df['price_change_pct'].shift(lag)
-    
-    # 8. Time-Based Features
-    df['hour'] = df.index.hour
-    df['day_of_week'] = df.index.dayofweek
-    df['day_of_month'] = df.index.day
-    df['month'] = df.index.month
-    if hasattr(df.index, 'minute'):
-        df['minute'] = df.index.minute
-    
-    # 9. Cross-over Signals
-    df['sma_cross_20_50'] = np.where(df['sma_20'] > df['sma_50'], 1, 0)
-    df['price_above_sma200'] = np.where(df['Close'] > df['sma_200'], 1, 0)
-    df['rsi_oversold'] = np.where(df['rsi_14'] < 30, 1, 0)
-    df['rsi_overbought'] = np.where(df['rsi_14'] > 70, 1, 0)
-    
-    # 10. Support/Resistance Levels
-    periods = [10, 20, 50]
-    for period in periods:
-        df[f'local_min_{period}'] = df['Low'].rolling(period, center=True).min()
-        df[f'local_max_{period}'] = df['High'].rolling(period, center=True).max()
-    
-    # 11. Fibonacci Retracements
-    fib_levels = [236, 382, 500, 618]
-    period = 50
-    rolling_high = df['High'].rolling(period).max()
-    rolling_low = df['Low'].rolling(period).min()
-    fib_range = rolling_high - rolling_low
-    
-    for level in fib_levels:
-        fib_value = rolling_low + (fib_range * level / 1000)
-        df[f'fib_{level}'] = fib_value
-        df[f'dist_fib_{level}'] = abs(df['Close'] - fib_value)
-    
-    # 12. Rolling Statistics
-    stat_windows = [10, 20, 50]
-    for window in stat_windows:
-        df[f'close_mean_{window}'] = df['Close'].rolling(window).mean()
-        df[f'close_std_{window}'] = df['Close'].rolling(window).std()
-        df[f'close_min_{window}'] = df['Close'].rolling(window).min()
-        df[f'close_max_{window}'] = df['Close'].rolling(window).max()
-    
-    # 13. Create Prediction Labels
-    thresholds = {'strict': 1.5, 'medium': 0.8, 'loose': 0.4}
-    horizons = [1, 4, 12, 24]
-    
-    for threshold_name, threshold_val in thresholds.items():
-        for horizon in horizons:
-            future_return = df['Close'].shift(-horizon).pct_change(horizon) * 100
-            
-            df[f'label_up_{threshold_name}_{horizon}'] = np.where(future_return > threshold_val, 1, 0)
-            df[f'label_down_{threshold_name}_{horizon}'] = np.where(future_return < -threshold_val, 1, 0)
-            df[f'label_neutral_{threshold_name}_{horizon}'] = np.where(
-                (future_return >= -threshold_val) & (future_return <= threshold_val), 1, 0
-            )
-    
-    # 14. Add next price change for immediate predictions
-    df['next_price_change_pct'] = df['Close'].shift(-1).pct_change() * 100
-    df['price_change_1step'] = df['Close'].pct_change() * 100
-    
-    # Clean up infinite and NaN values
-    df = df.replace([np.inf, -np.inf], np.nan)
-    
-    return df
+        # Standardize column names to lowercase for consistency
+        column_mapping = {
+            'Open': 'open',
+            'High': 'high', 
+            'Low': 'low',
+            'Close': 'close',
+            'Volume': 'volume'
+        }
+        
+        # Rename columns if they exist in uppercase
+        for old_col, new_col in column_mapping.items():
+            if old_col in df.columns:
+                df = df.rename(columns={old_col: new_col})
+        
+        # Ensure we have the required columns
+        required_cols = ['open', 'high', 'low', 'close', 'volume']
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        
+        if missing_cols:
+            raise ValueError(f"Missing required columns: {missing_cols}")
+        
+        print(f"📊 Creating features from {len(df)} data points")
+        print(f"📅 Date range: {df.index.min()} to {df.index.max()}")
+        
+        # Basic price features
+        df['returns'] = df['close'].pct_change()
+        df['log_returns'] = np.log(df['close'] / df['close'].shift(1))
+        
+        # Price ratios and spreads
+        df['high_low_ratio'] = df['high'] / df['low']
+        df['close_open_ratio'] = df['close'] / df['open']
+        df['hl_spread'] = (df['high'] - df['low']) / df['close']
+        df['co_spread'] = (df['close'] - df['open']) / df['close']
+        
+        # Volume features
+        df['volume_ma_5'] = df['volume'].rolling(5).mean()
+        df['volume_ma_20'] = df['volume'].rolling(20).mean()
+        df['volume_ratio'] = df['volume'] / df['volume_ma_20']
+        df['price_volume'] = df['close'] * df['volume']
+        
+        # Moving averages
+        for window in [5, 10, 20, 50]:
+            df[f'sma_{window}'] = df['close'].rolling(window).mean()
+            df[f'price_sma_{window}_ratio'] = df['close'] / df[f'sma_{window}']
+        
+        # Exponential moving averages
+        for span in [12, 26]:
+            df[f'ema_{span}'] = df['close'].ewm(span=span).mean()
+            df[f'price_ema_{span}_ratio'] = df['close'] / df[f'ema_{span}']
+        
+        # Volatility features
+        df['volatility_5'] = df['returns'].rolling(5).std()
+        df['volatility_20'] = df['returns'].rolling(20).std()
+        df['volatility_ratio'] = df['volatility_5'] / df['volatility_20']
+        
+        # Momentum indicators
+        df['roc_5'] = df['close'].pct_change(5)
+        df['roc_10'] = df['close'].pct_change(10)
+        df['momentum_5'] = df['close'] / df['close'].shift(5)
+        df['momentum_10'] = df['close'] / df['close'].shift(10)
+        
+        # Lag features
+        for lag in [1, 2, 3, 5]:
+            df[f'close_lag_{lag}'] = df['close'].shift(lag)
+            df[f'returns_lag_{lag}'] = df['returns'].shift(lag)
+            df[f'volume_lag_{lag}'] = df['volume'].shift(lag)
+        
+        # Statistical features
+        df['close_rank_10'] = df['close'].rolling(10).rank(pct=True)
+        df['close_rank_20'] = df['close'].rolling(20).rank(pct=True)
+        df['returns_skew_10'] = df['returns'].rolling(10).skew()
+        df['returns_kurt_10'] = df['returns'].rolling(10).kurt()
+        
+        # Remove infinite and NaN values
+        df = df.replace([np.inf, -np.inf], np.nan)
+        
+        # Get the number of features before cleaning
+        features_before = len(df.columns)
+        
+        # Remove columns with too many NaN values (>50%)
+        nan_threshold = len(df) * 0.5
+        df = df.dropna(thresh=nan_threshold, axis=1)
+        
+        features_after = len(df.columns)
+        print(f"🔧 Feature engineering completed: {features_before} → {features_after} features")
+        
+        return df
+        
+    except Exception as e:
+        print(f"Error in feature engineering: {e}")
+        raise e
 
 def create_price_difference_target(df, horizon=1):
     """
@@ -382,198 +303,213 @@ def select_top_features():
         'close_lag_1', 'close_lag_2', 'vol_lag_1', 'return_lag_1'
     ]
 
-def prepare_ml_dataset(df, target_type='price_diff_pct', horizon=1):
+def prepare_ml_dataset(data, target_type="price_diff_pct", horizon=1):
     """
-    Prepare dataset for ML training with strict data leakage prevention
+    Prepare dataset for machine learning with proper target variable creation
+    
+    Parameters:
+    -----------
+    data : pandas.DataFrame
+        OHLCV price data with datetime index
+    target_type : str
+        Type of target variable to predict:
+        - "price_diff_pct": Percentage price change
+        - "price_diff": Absolute price change  
+        - "price_direction": Binary direction (1=up, 0=down)
+    horizon : int
+        Prediction horizon - how many periods ahead to predict
+        Examples:
+        - horizon=1: Predict next period (1 hour ahead if using hourly data)
+        - horizon=4: Predict 4 periods ahead (4 hours ahead if using hourly data)
+        - horizon=24: Predict 24 periods ahead (1 day ahead if using hourly data)
+    
+    Returns:
+    --------
+    X : numpy.ndarray
+        Feature matrix
+    y : numpy.ndarray  
+        Target variable (what we're trying to predict)
+    features : list
+        Names of all features
+        
+    Example:
+    --------
+    If you have hourly Bitcoin data and set horizon=4:
+    - At 10:00 AM, model uses current features to predict Bitcoin price at 2:00 PM
+    - At 11:00 AM, model uses current features to predict Bitcoin price at 3:00 PM
+    - This gives the trading strategy a 4-hour "look ahead" for decision making
     """
-    print(f"Creating features for {len(df)} data points...")
-    
-    # Create features first
-    df_features = create_comprehensive_features(df)
-    
-    print(f"Features created, dataset now has {len(df_features)} rows")
-    
-    # Create targets
-    targets = create_price_difference_target(df_features, horizon)
-    df_features['target'] = targets[target_type]
-    
-    # Remove future-looking features that could cause data leakage
-    forbidden_features = [
-        'next_price_change_pct',  # This is literally future data
-        'price_change_1step'      # This might be current step
-    ]
-    
-    # Select features
-    feature_cols = select_top_features()
-    available_features = [col for col in feature_cols if col in df_features.columns and col not in forbidden_features]
-    
-    print(f"Available features: {len(available_features)}")
-    print(f"Features: {available_features}")
-    
-    if len(available_features) < 5:
-        # Fallback to very basic features
-        basic_features = ['price_change_pct', 'hl_ratio', 'oc_ratio', 'vol_price_ratio', 'rsi_14']
-        available_features = [col for col in basic_features if col in df_features.columns]
-        print(f"Using basic features: {available_features}")
-    
-    # Prepare final dataset and remove rows with future data
-    feature_data = df_features[available_features + ['target']].copy()
-    
-    # Remove the last 'horizon' rows as they don't have valid targets
-    feature_data = feature_data.iloc[:-horizon] if horizon > 0 else feature_data
-    
-    # Remove rows with NaN values
-    clean_data = feature_data.dropna()
-    
-    print(f"Clean dataset size: {len(clean_data)} (removed {len(feature_data) - len(clean_data)} rows with NaN)")
-    
-    X = clean_data[available_features]
-    y = clean_data['target']
-    
-    # Check for potential data leakage by examining target distribution
-    print(f"Target statistics: mean={y.mean():.4f}, std={y.std():.4f}, min={y.min():.4f}, max={y.max():.4f}")
-    
-    return X, y, available_features
+    try:
+        # Create comprehensive features from the raw OHLCV data
+        df_features = create_comprehensive_features(data)
+        
+        # Ensure we have 'close' column for target calculation
+        if 'close' not in df_features.columns:
+            raise ValueError("Missing 'close' column for target calculation")
+        
+        # Calculate the target variable based on horizon
+        if target_type == "price_diff_pct":
+            # Percentage price change over the horizon
+            # Example: If horizon=4, this calculates (price_t+4 - price_t) / price_t * 100
+            df_features['target'] = (
+                df_features['close'].shift(-horizon) - df_features['close']
+            ) / df_features['close'] * 100
+            
+        elif target_type == "price_diff":
+            # Absolute price change over the horizon
+            # Example: If horizon=4, this calculates price_t+4 - price_t
+            df_features['target'] = (
+                df_features['close'].shift(-horizon) - df_features['close']
+            )
+            
+        elif target_type == "price_direction":
+            # Binary direction: 1 if price goes up, 0 if down
+            # Example: If horizon=4, this checks if price_t+4 > price_t
+            df_features['target'] = (
+                df_features['close'].shift(-horizon) > df_features['close']
+            ).astype(int)
+        
+        # Remove rows where we can't calculate the target (last 'horizon' rows)
+        # This is because we need future prices to create the target
+        df_features = df_features.dropna()
+        
+        # Separate features and target
+        feature_columns = [col for col in df_features.columns if col != 'target']
+        X = df_features[feature_columns].values
+        y = df_features['target'].values
+        
+        print(f"📊 Dataset prepared:")
+        print(f"   Target type: {target_type}")
+        print(f"   Prediction horizon: {horizon} periods")
+        print(f"   Features: {len(feature_columns)}")
+        print(f"   Samples: {len(X)}")
+        print(f"   Target range: {y.min():.4f} to {y.max():.4f}")
+        
+        return X, y, feature_columns
+        
+    except Exception as e:
+        print(f"Error preparing ML dataset: {e}")
+        raise e
 
-def train_xgboost_model(X, y, features, model_type='regression', test_size=0.2, save_path=None):
+def train_xgboost_model(X, y, features, model_type='regression', custom_params=None):
     """
-    Train XGBoost model with more realistic parameters and validation
+    Train XGBoost model with proper array handling and updated API
     """
-    print(f"Training XGBoost {model_type} model with {len(features)} features...")
-    print(f"Dataset size: {len(X)} samples")
+    import xgboost as xgb
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import r2_score, accuracy_score, mean_squared_error, mean_absolute_error
     
-    # Check for potential data leakage indicators
-    if model_type == 'regression':
-        y_std = y.std()
-        if y_std < 0.1:
-            print(f"⚠️  WARNING: Very low target variance (std={y_std:.6f}) - possible data leakage!")
-    
-    # Use TimeSeriesSplit for proper time series validation
-    tscv = TimeSeriesSplit(n_splits=3)
-    
-    # Split data (keeping time order) - this is crucial for time series
-    split_idx = int(len(X) * (1 - test_size))
-    X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
-    y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
-    
-    print(f"Training set: {len(X_train)}, Test set: {len(X_test)}")
-    
-    # Scale features
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
-    
-    # Configure XGBoost with more conservative parameters
-    if model_type == 'regression':
-        model = xgb.XGBRegressor(
-            n_estimators=100,        # Reduced from 200
-            max_depth=4,             # Reduced from 6
-            learning_rate=0.05,      # Reduced from 0.1
-            subsample=0.7,           # Reduced from 0.8
-            colsample_bytree=0.7,    # Reduced from 0.8
-            random_state=42,
-            early_stopping_rounds=15,
-            eval_metric='rmse',
-            reg_alpha=0.1,           # L1 regularization
-            reg_lambda=1.0           # L2 regularization
+    try:
+        print(f"Training XGBoost {model_type} model with {len(features)} features...")
+        print(f"Dataset size: {len(X)} samples")
+        
+        # Ensure we have numpy arrays
+        if hasattr(X, 'values'):
+            X = X.values
+        if hasattr(y, 'values'):
+            y = y.values
+        
+        # Split data
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42, shuffle=False
         )
-    else:  # classification
-        model = xgb.XGBClassifier(
-            n_estimators=100,
-            max_depth=4,
-            learning_rate=0.05,
-            subsample=0.7,
-            colsample_bytree=0.7,
-            random_state=42,
-            early_stopping_rounds=15,
-            eval_metric='logloss',
-            reg_alpha=0.1,
-            reg_lambda=1.0
+        
+        # Set default parameters with early stopping in model initialization
+        if model_type == 'regression':
+            default_params = {
+                'n_estimators': 200,
+                'max_depth': 6,
+                'learning_rate': 0.1,
+                'subsample': 0.8,
+                'colsample_bytree': 0.8,
+                'random_state': 42,
+                'n_jobs': -1,
+                'early_stopping_rounds': 20,  # Move to model init
+                'eval_metric': 'rmse'
+            }
+            model = xgb.XGBRegressor(**default_params)
+        else:  # classification
+            default_params = {
+                'n_estimators': 200,
+                'max_depth': 6,
+                'learning_rate': 0.1,
+                'subsample': 0.8,
+                'colsample_bytree': 0.8,
+                'random_state': 42,
+                'n_jobs': -1,
+                'early_stopping_rounds': 20,  # Move to model init
+                'eval_metric': 'logloss'
+            }
+            model = xgb.XGBClassifier(**default_params)
+        
+        # Override with custom parameters if provided
+        if custom_params:
+            # Remove early_stopping_rounds from custom_params if it exists
+            # and set it separately since it needs to be in model init
+            early_stopping = custom_params.pop('early_stopping_rounds', 20)
+            model.set_params(**custom_params)
+            model.set_params(early_stopping_rounds=early_stopping)
+        
+        # Train model with eval_set for early stopping
+        model.fit(
+            X_train, y_train, 
+            eval_set=[(X_test, y_test)], 
+            verbose=False
         )
-    
-    # Train model with validation
-    print("Training model...")
-    model.fit(
-        X_train_scaled, y_train,
-        eval_set=[(X_train_scaled, y_train), (X_test_scaled, y_test)],
-        verbose=True  # Show training progress
-    )
-    
-    # Make predictions
-    y_pred_train = model.predict(X_train_scaled)
-    y_pred_test = model.predict(X_test_scaled)
-    
-    # Calculate metrics
-    if model_type == 'regression':
-        train_score = r2_score(y_train, y_pred_train)
-        test_score = r2_score(y_test, y_pred_test)
-        train_rmse = np.sqrt(mean_squared_error(y_train, y_pred_train))
-        test_rmse = np.sqrt(mean_squared_error(y_test, y_pred_test))
-        train_mae = mean_absolute_error(y_train, y_pred_train)
-        test_mae = mean_absolute_error(y_test, y_pred_test)
         
-        # Check for overfitting
-        r2_diff = train_score - test_score
-        if r2_diff > 0.1:
-            print(f"⚠️  WARNING: Possible overfitting detected! R² difference: {r2_diff:.4f}")
+        # Make predictions
+        y_train_pred = model.predict(X_train)
+        y_test_pred = model.predict(X_test)
         
-        # Check for unrealistic performance
-        if test_score > 0.9:
-            print(f"⚠️  WARNING: Unrealistically high R² ({test_score:.4f}) - check for data leakage!")
+        # Calculate metrics
+        metrics = {}
         
-        metrics = {
-            'train_r2': train_score,
-            'test_r2': test_score,
-            'train_rmse': train_rmse,
-            'test_rmse': test_rmse,
-            'train_mae': train_mae,
-            'test_mae': test_mae,
-            'overfitting_score': r2_diff
+        if model_type == 'regression':
+            metrics['train_r2'] = r2_score(y_train, y_train_pred)
+            metrics['test_r2'] = r2_score(y_test, y_test_pred)
+            metrics['train_rmse'] = np.sqrt(mean_squared_error(y_train, y_train_pred))
+            metrics['test_rmse'] = np.sqrt(mean_squared_error(y_test, y_test_pred))
+            metrics['test_mae'] = mean_absolute_error(y_test, y_test_pred)
+            metrics['overfitting_score'] = metrics['train_r2'] - metrics['test_r2']
+        else:  # classification
+            metrics['train_accuracy'] = accuracy_score(y_train, y_train_pred)
+            metrics['test_accuracy'] = accuracy_score(y_test, y_test_pred)
+            metrics['overfitting_score'] = metrics['train_accuracy'] - metrics['test_accuracy']
+        
+        # Get feature importance
+        feature_importance = None
+        if hasattr(model, 'feature_importances_'):
+            importance_data = list(zip(features, model.feature_importances_))
+            importance_data.sort(key=lambda x: x[1], reverse=True)
+            feature_importance = pd.DataFrame(importance_data, columns=['feature', 'importance'])
+        
+        # Create model info dictionary
+        model_info = {
+            'model': model,
+            'model_type': model_type,
+            'features': features,
+            'metrics': metrics,
+            'feature_importance': feature_importance,
+            'X_train': X_train,
+            'X_test': X_test,
+            'y_train': y_train,
+            'y_test': y_test,
+            'y_pred': y_test_pred
         }
-    else:
-        train_score = model.score(X_train_scaled, y_train)
-        test_score = model.score(X_test_scaled, y_test)
         
-        acc_diff = train_score - test_score
-        if acc_diff > 0.1:
-            print(f"⚠️  WARNING: Possible overfitting detected! Accuracy difference: {acc_diff:.4f}")
+        print(f"✅ Model training completed!")
+        print(f"   Features: {len(features)}")
+        if model_type == 'regression':
+            print(f"   Test R²: {metrics['test_r2']:.4f}")
+            print(f"   Test RMSE: {metrics['test_rmse']:.4f}")
+        else:
+            print(f"   Test Accuracy: {metrics['test_accuracy']:.4f}")
         
-        metrics = {
-            'train_accuracy': train_score,
-            'test_accuracy': test_score,
-            'overfitting_score': acc_diff
-        }
-    
-    # Feature importance analysis
-    feature_importance = pd.DataFrame({
-        'feature': features,
-        'importance': model.feature_importances_
-    }).sort_values('importance', ascending=False)
-    
-    print("\nTop 5 Most Important Features:")
-    print(feature_importance.head())
-    
-    model_info = {
-        'model': model,
-        'scaler': scaler,
-        'features': features,
-        'model_type': model_type,
-        'metrics': metrics,
-        'feature_importance': feature_importance,
-        'X_test': X_test,
-        'y_test': y_test,
-        'y_pred': y_pred_test
-    }
-    
-    # Save model if path provided
-    if save_path:
-        joblib.dump(model_info, save_path)
-        print(f"Model saved to {save_path}")
-    
-    print("Training completed!")
-    print(f"Final metrics: {metrics}")
-    
-    return model_info
+        return model_info
+        
+    except Exception as e:
+        print(f"❌ XGBoost training failed: {e}")
+        raise e
 
 def load_trained_model(model_path):
     """
@@ -601,59 +537,75 @@ def train_ml_model(df, target_type='price_diff_pct', horizon=1, model_type='regr
     
     return model_info
 
-def generate_ml_signals(df, model_info, confidence_threshold=0.6):
+def generate_ml_signals(data, model_info, confidence_threshold=0.6):
     """
-    Generate trading signals using the trained XGBoost model
+    Generate ML trading signals with proper data handling
     """
-    model = model_info['model']
-    scaler = model_info['scaler']
-    features = model_info['features']
-    model_type = model_info['model_type']
-    
-    # Prepare features
-    feature_data = df[features].copy()
-    
-    # Handle missing values
-    feature_data = feature_data.fillna(method='ffill').fillna(0)
-    
-    # Scale features
     try:
-        X_scaled = scaler.transform(feature_data)
+        # Ensure we have a DataFrame
+        if isinstance(data, np.ndarray):
+            raise ValueError("Data must be a pandas DataFrame for signal generation")
+        
+        model = model_info['model']
+        features = model_info['features']
+        model_type = model_info['model_type']
+        
+        # Prepare features for prediction
+        available_features = [f for f in features if f in data.columns]
+        missing_features = [f for f in features if f not in data.columns]
+        
+        if missing_features:
+            print(f"⚠️ Missing features: {missing_features[:5]}...")  # Show first 5
+        
+        if len(available_features) < len(features) * 0.8:  # Need at least 80% of features
+            raise ValueError(f"Too many missing features: {len(missing_features)}/{len(features)}")
+        
+        # Use available features and fill missing ones with 0
+        X_signals = np.zeros((len(data), len(features)))
+        
+        for i, feature in enumerate(features):
+            if feature in data.columns:
+                X_signals[:, i] = data[feature].fillna(0).values
+            else:
+                X_signals[:, i] = 0  # Fill missing features with 0
         
         # Generate predictions
-        predictions = model.predict(X_scaled)
+        if model_type == 'regression':
+            predictions = model.predict(X_signals)
+            
+            # Convert to signals based on prediction magnitude
+            signals = np.where(predictions > np.percentile(predictions, 60), 1, 0)
+            signals = np.where(predictions < np.percentile(predictions, 40), -1, signals)
+            
+            # Use absolute prediction as confidence
+            confidence = np.abs(predictions) / (np.abs(predictions).max() + 1e-8)
+            
+        else:  # classification
+            predictions = model.predict(X_signals)
+            pred_proba = model.predict_proba(X_signals)
+            
+            # Direct signals from classification
+            signals = np.where(predictions == 1, 1, -1)
+            
+            # Use prediction probability as confidence
+            confidence = np.max(pred_proba, axis=1)
         
         # Create signals DataFrame
-        signals = pd.DataFrame(index=df.index)
-        signals['prediction'] = predictions
+        signals_df = pd.DataFrame({
+            'signal': signals,
+            'confidence': confidence,
+            'prediction': predictions
+        }, index=data.index)
         
-        if model_type == 'regression':
-            # For regression, convert price difference to signals
-            # Positive prediction = buy, negative = sell
-            signals['confidence'] = np.abs(predictions) / (np.abs(predictions).max() + 0.001)
-            signals['signal'] = np.where(
-                (predictions > 0.5) & (signals['confidence'] > confidence_threshold), 1,
-                np.where((predictions < -0.5) & (signals['confidence'] > confidence_threshold), -1, 0)
-            )
-        else:
-            # For classification, use probabilities
-            probabilities = model.predict_proba(X_scaled)
-            signals['confidence'] = np.max(probabilities, axis=1)
-            signals['signal'] = np.where(
-                (predictions == 1) & (signals['confidence'] > confidence_threshold), 1,
-                np.where((predictions == -1) & (signals['confidence'] > confidence_threshold), -1, 0)
-            )
+        print(f"✅ Generated {len(signals_df)} ML signals")
+        print(f"   Signal distribution: {pd.Series(signals).value_counts().to_dict()}")
+        print(f"   Average confidence: {confidence.mean():.3f}")
         
-        return signals
-    
+        return signals_df
+        
     except Exception as e:
-        print(f"Error generating signals: {e}")
-        # Fallback to simple signals if ML fails
-        signals = pd.DataFrame(index=df.index)
-        signals['prediction'] = 0
-        signals['confidence'] = 0.5
-        signals['signal'] = 0
-        return signals
+        print(f"❌ Signal generation failed: {e}")
+        raise e
 
 def run_training_pipeline(symbol, start_date, end_date, interval='1h', 
                          target_type='price_diff_pct', horizon=1, 
@@ -676,3 +628,312 @@ def run_training_pipeline(symbol, start_date, end_date, interval='1h',
     print("=== Training Pipeline Complete ===")
     
     return model_info, data
+
+def optimize_xgboost_hyperparameters(data, target_type, horizon, param_grid, cv_folds=5, method='grid_search'):
+    """
+    Optimize XGBoost hyperparameters using various methods with updated API
+    """
+    from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
+    from sklearn.metrics import r2_score, mean_squared_error
+    import xgboost as xgb
+    
+    # Ensure we have a DataFrame
+    if isinstance(data, np.ndarray):
+        raise ValueError("Data must be a pandas DataFrame for optimization")
+    
+    # Prepare data
+    X, y, features = prepare_ml_dataset(data, target_type, horizon)
+    
+    # Split for validation
+    split_idx = int(len(X) * 0.8)
+    X_train, X_val = X[:split_idx], X[split_idx:]
+    y_train, y_val = y[:split_idx], y[split_idx:]
+    
+    # Base XGBoost model with early stopping in init
+    base_model = xgb.XGBRegressor(
+        random_state=42,
+        n_jobs=-1,
+        early_stopping_rounds=10,
+        eval_metric='rmse'
+    )
+    
+    # Choose optimization method
+    if method == 'grid_search':
+        search = GridSearchCV(
+            base_model,
+            param_grid,
+            cv=cv_folds,
+            scoring='r2',
+            n_jobs=-1,
+            verbose=1
+        )
+    elif method == 'random_search':
+        search = RandomizedSearchCV(
+            base_model,
+            param_grid,
+            n_iter=20,
+            cv=cv_folds,
+            scoring='r2',
+            n_jobs=-1,
+            random_state=42,
+            verbose=1
+        )
+    else:  # bayesian_optimization
+        # For Bayesian optimization, we'd need optuna or similar
+        # Simplified version using random search for now
+        search = RandomizedSearchCV(
+            base_model,
+            param_grid,
+            n_iter=30,
+            cv=cv_folds,
+            scoring='r2',
+            n_jobs=-1,
+            random_state=42
+        )
+    
+    # Fit the search - use fit_params for eval_set
+    search.fit(
+        X_train, y_train,
+        eval_set=[(X_val, y_val)],
+        verbose=False
+    )
+    
+    # Return results
+    return search.best_params_, {
+        'best_score': search.best_score_,
+        'cv_results': search.cv_results_
+    }
+
+def optimize_feature_selection(data, target_type, horizon, method='rfe', n_features=15):
+    """
+    Optimize feature selection using various methods
+    """
+    from sklearn.feature_selection import RFE, SelectKBest, f_regression
+    from sklearn.ensemble import RandomForestRegressor
+    import xgboost as xgb
+    
+    # Ensure we have a DataFrame
+    if isinstance(data, np.ndarray):
+        raise ValueError("Data must be a pandas DataFrame for feature selection")
+    
+    # Prepare data
+    X, y, features = prepare_ml_dataset(data, target_type, horizon)
+    
+    if method.lower() == 'recursive_feature_elimination' or method.lower() == 'rfe':
+        # Use Random Forest for feature selection
+        estimator = RandomForestRegressor(n_estimators=50, random_state=42)
+        selector = RFE(estimator, n_features_to_select=n_features)
+        X_selected = selector.fit_transform(X, y)
+        selected_features = [features[i] for i in range(len(features)) if selector.support_[i]]
+        
+    elif method.lower() == 'feature_importance':
+        # Use XGBoost feature importance
+        model = xgb.XGBRegressor(n_estimators=100, random_state=42)
+        model.fit(X, y)
+        
+        # Get feature importance
+        importance_scores = model.feature_importances_
+        feature_importance = list(zip(features, importance_scores))
+        feature_importance.sort(key=lambda x: x[1], reverse=True)
+        
+        # Select top features
+        selected_features = [feat for feat, score in feature_importance[:n_features]]
+        X_selected = X[:, [features.index(feat) for feat in selected_features]]
+        
+    elif method.lower() == 'correlation_analysis':
+        # Remove highly correlated features
+        corr_matrix = pd.DataFrame(X, columns=features).corr().abs()
+        upper_tri = corr_matrix.where(
+            np.triu(np.ones(corr_matrix.shape), k=1).astype(bool)
+        )
+        
+        # Find features with correlation > threshold
+        to_drop = [column for column in upper_tri.columns if any(upper_tri[column] > 0.8)]
+        selected_features = [feat for feat in features if feat not in to_drop]
+        X_selected = pd.DataFrame(X, columns=features)[selected_features].values
+        
+    else:  # SelectKBest
+        selector = SelectKBest(score_func=f_regression, k=n_features)
+        X_selected = selector.fit_transform(X, y)
+        selected_features = [features[i] for i in range(len(features)) if selector.get_support()[i]]
+    
+    # Evaluate selected features
+    from sklearn.model_selection import cross_val_score
+    model = xgb.XGBRegressor(n_estimators=100, random_state=42)
+    scores = cross_val_score(model, X_selected, y, cv=5, scoring='r2')
+    
+    return selected_features, {
+        'score': scores.mean(),
+        'score_std': scores.std(),
+        'n_features': len(selected_features)
+    }
+
+def compare_models(data, target_type, horizon, model_names):
+    """
+    Compare performance of different model types
+    """
+    from sklearn.ensemble import RandomForestRegressor
+    from sklearn.neural_network import MLPRegressor
+    from sklearn.model_selection import cross_val_score
+    import xgboost as xgb
+    
+    # Ensure we have a DataFrame
+    if isinstance(data, np.ndarray):
+        raise ValueError("Data must be a pandas DataFrame for model comparison")
+    
+    # Prepare data
+    X, y, features = prepare_ml_dataset(data, target_type, horizon)
+    
+    # Define models
+    models = {}
+    
+    if 'XGBoost' in model_names:
+        models['XGBoost'] = xgb.XGBRegressor(
+            n_estimators=200,
+            max_depth=6,
+            learning_rate=0.1,
+            random_state=42
+        )
+    
+    if 'Random Forest' in model_names:
+        models['Random Forest'] = RandomForestRegressor(
+            n_estimators=200,
+            max_depth=10,
+            random_state=42,
+            n_jobs=-1
+        )
+    
+    if 'Neural Network' in model_names:
+        models['Neural Network'] = MLPRegressor(
+            hidden_layer_sizes=(100, 50),
+            max_iter=500,
+            random_state=42,
+            early_stopping=True
+        )
+    
+    # Compare models
+    results = {}
+    for name, model in models.items():
+        try:
+            # Cross-validation scores
+            cv_scores = cross_val_score(model, X, y, cv=5, scoring='r2')
+            
+            # Fit model for additional metrics
+            split_idx = int(len(X) * 0.8)
+            X_train, X_test = X[:split_idx], X[split_idx:]
+            y_train, y_test = y[:split_idx], y[split_idx:]
+            
+            model.fit(X_train, y_train)
+            y_pred = model.predict(X_test)
+            
+            from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+            
+            results[name] = {
+                'cv_r2_mean': cv_scores.mean(),
+                'cv_r2_std': cv_scores.std(),
+                'test_r2': r2_score(y_test, y_pred),
+                'test_rmse': np.sqrt(mean_squared_error(y_test, y_pred)),
+                'test_mae': mean_absolute_error(y_test, y_pred)
+            }
+            
+        except Exception as e:
+            results[name] = {'error': str(e)}
+    
+    return results
+
+def advanced_feature_engineering(data, add_technical_indicators=True, add_time_features=True, add_regime_features=True):
+    """
+    Apply advanced feature engineering techniques
+    """
+    # Ensure we have a DataFrame
+    if isinstance(data, np.ndarray):
+        raise ValueError("Data must be a pandas DataFrame for advanced feature engineering")
+    
+    enhanced_data = data.copy()
+    
+    if add_technical_indicators:
+        # RSI
+        def calculate_rsi(prices, window=14):
+            delta = prices.diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs))
+            return rsi
+        
+        enhanced_data['rsi'] = calculate_rsi(enhanced_data['close'])
+        
+        # MACD
+        ema_12 = enhanced_data['close'].ewm(span=12).mean()
+        ema_26 = enhanced_data['close'].ewm(span=26).mean()
+        enhanced_data['macd'] = ema_12 - ema_26
+        enhanced_data['macd_signal'] = enhanced_data['macd'].ewm(span=9).mean()
+        
+        # Bollinger Bands
+        rolling_mean = enhanced_data['close'].rolling(window=20).mean()
+        rolling_std = enhanced_data['close'].rolling(window=20).std()
+        enhanced_data['bb_upper'] = rolling_mean + (rolling_std * 2)
+        enhanced_data['bb_lower'] = rolling_mean - (rolling_std * 2)
+        enhanced_data['bb_width'] = enhanced_data['bb_upper'] - enhanced_data['bb_lower']
+    
+    if add_time_features:
+        # Time-based features
+        enhanced_data['hour'] = enhanced_data.index.hour
+        enhanced_data['day_of_week'] = enhanced_data.index.dayofweek
+        enhanced_data['month'] = enhanced_data.index.month
+        enhanced_data['quarter'] = enhanced_data.index.quarter
+    
+    if add_regime_features:
+        # Volatility regime (high/low volatility periods)
+        enhanced_data['volatility'] = enhanced_data['close'].rolling(window=20).std()
+        vol_median = enhanced_data['volatility'].median()
+        enhanced_data['high_vol_regime'] = (enhanced_data['volatility'] > vol_median).astype(int)
+        
+        # Trend regime (bull/bear market)
+        enhanced_data['trend_20'] = enhanced_data['close'].rolling(window=20).mean()
+        enhanced_data['trend_50'] = enhanced_data['close'].rolling(window=50).mean()
+        enhanced_data['bull_regime'] = (enhanced_data['trend_20'] > enhanced_data['trend_50']).astype(int)
+    
+    # Remove any NaN values created by rolling calculations
+    enhanced_data = enhanced_data.dropna()
+    
+    return enhanced_data
+
+def run_training_pipeline(symbol, start_date, end_date, interval='1d', target_type='price_diff_pct', 
+                         horizon=1, model_type='regression', save_model_path=None, api_key=None):
+    """
+    Complete training pipeline with proper data handling
+    """
+    try:
+        # Download data with enhanced data fetcher
+        print(f"📊 Starting training pipeline for {symbol}")
+        
+        # Use the enhanced data fetcher
+        training_data = download_market_data(symbol, start_date, end_date, interval, api_key)
+        
+        if training_data.empty:
+            raise ValueError(f"No training data available for {symbol}")
+        
+        print(f"✅ Downloaded {len(training_data)} data points")
+        
+        # Prepare ML dataset
+        print("🔄 Preparing ML dataset...")
+        X, y, features = prepare_ml_dataset(training_data, target_type, horizon)
+        
+        # Train XGBoost model
+        print("🤖 Training XGBoost model...")
+        model_info = train_xgboost_model(X, y, features, model_type)
+        
+        # Save model if requested
+        if save_model_path:
+            import joblib
+            import os
+            os.makedirs(os.path.dirname(save_model_path), exist_ok=True)
+            joblib.dump(model_info, save_model_path)
+            print(f"💾 Model saved to {save_model_path}")
+        
+        return model_info, training_data
+        
+    except Exception as e:
+        print(f"❌ Training pipeline failed: {e}")
+        raise e

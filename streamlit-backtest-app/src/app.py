@@ -21,7 +21,7 @@ st.set_page_config(
 )
 
 # Add tabs for different functionalities
-tab1, tab2, tab3 = st.tabs(["📈 Backtest", "🤖 ML Training", "📊 Model Analysis"])
+tab1, tab2, tab3, tab4 = st.tabs(["📈 Backtest", "🤖 ML Training", "🔧 Model Optimization", "📊 Model Analysis"])
 
 with tab1:
     st.title("📈 Trading Strategy Backtester")
@@ -621,6 +621,386 @@ with tab2:
                 st.info("💡 Try different symbols: BTC, ETH for crypto or AAPL, GOOGL for stocks")
 
 with tab3:
+    st.title("🔧 Model Optimization")
+    st.markdown("Optimize model performance through hyperparameter tuning and feature engineering")
+    
+    # Check if we have training data or model to optimize
+    if 'trained_model' not in st.session_state and 'training_data' not in st.session_state:
+        st.info("🎯 **No model available for optimization.**")
+        st.markdown("""
+        **To get started:**
+        1. Go to the **ML Training** tab
+        2. Train a baseline model first
+        3. Return here to optimize it
+        
+        **What this tab offers:**
+        - 🎛️ **Hyperparameter Tuning**: Optimize XGBoost parameters
+        - 🔍 **Feature Selection**: Find the best feature combinations
+        - 📊 **Model Comparison**: Compare different configurations
+        - 🚀 **Advanced Models**: Try Random Forest, Neural Networks
+        """)
+    else:
+        # Optimization controls
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            st.subheader("🎯 Optimization Strategy")
+            
+            optimization_type = st.selectbox(
+                "Choose Optimization Method",
+                ["Hyperparameter Tuning", "Feature Selection", "Model Comparison", "Advanced Engineering"]
+            )
+            
+            if optimization_type == "Hyperparameter Tuning":
+                st.markdown("**Optimize XGBoost hyperparameters using grid search or random search**")
+                
+                tuning_method = st.selectbox("Tuning Method", ["Grid Search", "Random Search", "Bayesian Optimization"])
+                
+                # XGBoost parameters to tune
+                st.subheader("Parameters to Optimize")
+                
+                tune_n_estimators = st.checkbox("n_estimators", value=True)
+                if tune_n_estimators:
+                    n_est_range = st.slider("n_estimators range", 50, 1000, (100, 500), step=50)
+                
+                tune_max_depth = st.checkbox("max_depth", value=True)
+                if tune_max_depth:
+                    depth_range = st.slider("max_depth range", 3, 15, (4, 8))
+                
+                tune_learning_rate = st.checkbox("learning_rate", value=True)
+                if tune_learning_rate:
+                    lr_range = st.slider("learning_rate range", 0.01, 0.3, (0.05, 0.2), step=0.01)
+                
+                tune_subsample = st.checkbox("subsample", value=False)
+                if tune_subsample:
+                    subsample_range = st.slider("subsample range", 0.6, 1.0, (0.8, 1.0), step=0.1)
+                
+                # Advanced parameters
+                with st.expander("🔧 Advanced Parameters"):
+                    tune_colsample = st.checkbox("colsample_bytree")
+                    if tune_colsample:
+                        colsample_range = st.slider("colsample_bytree range", 0.6, 1.0, (0.8, 1.0), step=0.1)
+                    
+                    tune_gamma = st.checkbox("gamma (regularization)")
+                    if tune_gamma:
+                        gamma_range = st.slider("gamma range", 0.0, 5.0, (0.0, 2.0), step=0.5)
+                
+                cv_folds = st.slider("Cross-validation folds", 3, 10, 5)
+                n_trials = st.slider("Number of trials", 10, 100, 20) if tuning_method != "Grid Search" else None
+                
+            elif optimization_type == "Feature Selection":
+                st.markdown("**Find the optimal feature combination**")
+                
+                selection_method = st.selectbox(
+                    "Selection Method", 
+                    ["Recursive Feature Elimination", "Feature Importance", "Correlation Analysis", "Sequential Selection"]
+                )
+                
+                if selection_method == "Recursive Feature Elimination":
+                    n_features_to_select = st.slider("Target number of features", 5, 50, 15)
+                elif selection_method == "Feature Importance":
+                    importance_threshold = st.slider("Importance threshold", 0.01, 0.1, 0.02, step=0.01)
+                elif selection_method == "Correlation Analysis":
+                    correlation_threshold = st.slider("Correlation threshold", 0.7, 0.95, 0.8, step=0.05)
+                
+                # Feature engineering options
+                st.subheader("Feature Engineering")
+                add_polynomial = st.checkbox("Add polynomial features (degree 2)")
+                add_interactions = st.checkbox("Add feature interactions")
+                add_rolling_features = st.checkbox("Add more rolling window features")
+                
+                if add_rolling_features:
+                    rolling_windows = st.multiselect(
+                        "Rolling windows", 
+                        [5, 10, 20, 50, 100, 200],
+                        default=[5, 10, 20]
+                    )
+                
+            elif optimization_type == "Model Comparison":
+                st.markdown("**Compare different model types**")
+                
+                models_to_compare = st.multiselect(
+                    "Models to compare",
+                    ["XGBoost", "Random Forest", "LightGBM", "CatBoost", "Neural Network"],
+                    default=["XGBoost", "Random Forest"]
+                )
+                
+                # Ensemble options
+                st.subheader("Ensemble Methods")
+                create_ensemble = st.checkbox("Create ensemble model")
+                if create_ensemble:
+                    ensemble_method = st.selectbox("Ensemble method", ["Voting", "Stacking", "Blending"])
+                
+            else:  # Advanced Engineering
+                st.markdown("**Advanced feature engineering and model architectures**")
+                
+                # Technical indicators
+                st.subheader("Technical Indicators")
+                add_rsi = st.checkbox("RSI (Relative Strength Index)", value=True)
+                add_macd = st.checkbox("MACD", value=True)
+                add_bollinger = st.checkbox("Bollinger Bands", value=True)
+                add_stochastic = st.checkbox("Stochastic Oscillator")
+                add_williams = st.checkbox("Williams %R")
+                
+                # Time-based features
+                st.subheader("Time Features")
+                add_time_features = st.checkbox("Hour/Day/Week features", value=True)
+                add_seasonal = st.checkbox("Seasonal decomposition")
+                add_fourier = st.checkbox("Fourier transform features")
+                
+                # Market regime features
+                st.subheader("Market Regime")
+                add_volatility_regime = st.checkbox("Volatility regime detection")
+                add_trend_regime = st.checkbox("Trend regime detection")
+        
+        with col2:
+            st.subheader("📊 Current Model Performance")
+            
+            if 'trained_model' in st.session_state:
+                model_info = st.session_state.trained_model
+                
+                # Current metrics
+                metrics_col1, metrics_col2 = st.columns(2)
+                with metrics_col1:
+                    if 'test_r2' in model_info['metrics']:
+                        st.metric("Current Test R²", f"{model_info['metrics']['test_r2']:.4f}")
+                        st.metric("Current Train R²", f"{model_info['metrics']['train_r2']:.4f}")
+                    else:
+                        st.metric("Current Test Acc", f"{model_info['metrics'].get('test_accuracy', 0):.4f}")
+                        st.metric("Current Train Acc", f"{model_info['metrics'].get('train_accuracy', 0):.4f}")
+                
+                with metrics_col2:
+                    if 'test_rmse' in model_info['metrics']:
+                        st.metric("Current RMSE", f"{model_info['metrics']['test_rmse']:.4f}")
+                        st.metric("Current MAE", f"{model_info['metrics'].get('test_mae', 0):.4f}")
+                    
+                    st.metric("Features Used", len(model_info['features']))
+                
+                # Performance analysis
+                current_r2 = model_info['metrics'].get('test_r2', 0)
+                overfitting = model_info['metrics'].get('train_r2', 0) - current_r2
+                
+                if current_r2 < 0.1:
+                    st.warning("⚠️ **Low R² Score**: Model has weak predictive power")
+                    st.info("""
+                    **Recommendations:**
+                    1. Try hyperparameter tuning
+                    2. Add more technical indicators
+                    3. Consider ensemble methods
+                    4. Check for data leakage
+                    """)
+                
+                if overfitting > 0.05:
+                    st.warning("⚠️ **Overfitting Detected**: Large gap between train/test performance")
+                    st.info("""
+                    **Solutions:**
+                    1. Increase regularization
+                    2. Reduce model complexity
+                    3. Add more training data
+                    4. Use cross-validation
+                    """)
+            
+            # Optimization targets
+            st.subheader("🎯 Optimization Targets")
+            
+            target_r2 = st.slider("Target R² Score", 0.1, 0.8, 0.3, step=0.05)
+            max_overfitting = st.slider("Max Overfitting Gap", 0.01, 0.1, 0.03, step=0.01)
+            max_training_time = st.slider("Max Training Time (minutes)", 1, 60, 10)
+        
+        # Run optimization button
+        st.markdown("---")
+        run_optimization = st.button("🚀 Run Optimization", type="primary", use_container_width=True)
+        
+        if run_optimization:
+            with st.spinner("🔄 Running optimization..."):
+                try:
+                    # Get base data
+                    if 'training_data' in st.session_state:
+                        training_data = st.session_state.training_data
+                    else:
+                        st.error("No training data available")
+                        st.stop()
+                    
+                    # Get base model parameters
+                    base_model = st.session_state.trained_model
+                    target_type = "price_diff_pct"  # Get from model info if available
+                    horizon = 1
+                    model_type = base_model.get('model_type', 'regression')
+                    
+                    optimization_results = []
+                    
+                    if optimization_type == "Hyperparameter Tuning":
+                        st.info(f"🎛️ Running {tuning_method} hyperparameter optimization...")
+                        
+                        # Import optimization utilities
+                        from utils.ml_engine import optimize_xgboost_hyperparameters
+                        
+                        # Prepare parameter grid
+                        param_grid = {}
+                        if tune_n_estimators:
+                            param_grid['n_estimators'] = list(range(n_est_range[0], n_est_range[1]+1, 50))
+                        if tune_max_depth:
+                            param_grid['max_depth'] = list(range(depth_range[0], depth_range[1]+1))
+                        if tune_learning_rate:
+                            param_grid['learning_rate'] = [round(x, 2) for x in np.arange(lr_range[0], lr_range[1]+0.01, 0.02)]
+                        
+                        # Run optimization
+                        best_params, cv_results = optimize_xgboost_hyperparameters(
+                            training_data, 
+                            target_type, 
+                            horizon, 
+                            param_grid, 
+                            cv_folds,
+                            tuning_method.lower().replace(' ', '_')
+                        )
+                        
+                        st.success("✅ Hyperparameter optimization completed!")
+                        
+                        # Display results
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.subheader("🏆 Best Parameters")
+                            for param, value in best_params.items():
+                                st.metric(param, value)
+                        
+                        with col2:
+                            st.subheader("📈 Performance Improvement")
+                            improvement = cv_results['best_score'] - current_r2
+                            st.metric("R² Improvement", f"+{improvement:.4f}")
+                            st.metric("Best CV Score", f"{cv_results['best_score']:.4f}")
+                        
+                        # Store optimized model
+                        if st.button("💾 Use Optimized Parameters"):
+                            # Retrain with best parameters
+                            from utils.ml_engine import prepare_ml_dataset, train_xgboost_model
+                            X, y, features = prepare_ml_dataset(training_data, target_type, horizon)
+                            
+                            optimized_model = train_xgboost_model(
+                                X, y, features, model_type, 
+                                custom_params=best_params
+                            )
+                            
+                            st.session_state.trained_model = optimized_model
+                            st.success("✅ Model updated with optimized parameters!")
+                            st.rerun()
+                    
+                    elif optimization_type == "Feature Selection":
+                        st.info(f"🔍 Running {selection_method}...")
+                        
+                        from utils.ml_engine import optimize_feature_selection, create_comprehensive_features
+                        
+                        # Enhanced feature engineering
+                        enhanced_data = create_comprehensive_features(training_data)
+                        
+                        if add_polynomial:
+                            st.info("Adding polynomial features...")
+                            # Add polynomial features for top features
+                            numeric_cols = enhanced_data.select_dtypes(include=[np.number]).columns[:10]  # Top 10 features
+                            for col in numeric_cols:
+                                enhanced_data[f"{col}_squared"] = enhanced_data[col] ** 2
+                        
+                        if add_interactions:
+                            st.info("Adding interaction features...")
+                            # Add key interactions
+                            enhanced_data['volume_price_interaction'] = enhanced_data['volume'] * enhanced_data['close']
+                            enhanced_data['high_low_spread'] = enhanced_data['high'] - enhanced_data['low']
+                        
+                        # Run feature selection
+                        selected_features, selection_results = optimize_feature_selection(
+                            enhanced_data, target_type, horizon, selection_method, n_features_to_select
+                        )
+                        
+                        st.success("✅ Feature selection completed!")
+                        
+                        # Display results
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.subheader("📋 Selected Features")
+                            st.write(f"Reduced from {len(enhanced_data.columns)} to {len(selected_features)} features")
+                            st.dataframe(pd.DataFrame(selected_features, columns=['Feature']))
+                        
+                        with col2:
+                            st.subheader("📈 Performance")
+                            st.metric("New R² Score", f"{selection_results['score']:.4f}")
+                            improvement = selection_results['score'] - current_r2
+                            st.metric("Improvement", f"+{improvement:.4f}")
+                    
+                    elif optimization_type == "Model Comparison":
+                        st.info("🔄 Training and comparing multiple models...")
+                        
+                        from utils.ml_engine import compare_models
+                        
+                        comparison_results = compare_models(
+                            training_data, 
+                            target_type, 
+                            horizon, 
+                            models_to_compare
+                        )
+                        
+                        st.success("✅ Model comparison completed!")
+                        
+                        # Display comparison
+                        st.subheader("🏆 Model Performance Comparison")
+                        comparison_df = pd.DataFrame(comparison_results).T
+                        comparison_df = comparison_df.sort_values('test_r2', ascending=False)
+                        
+                        st.dataframe(comparison_df, use_container_width=True)
+                        
+                        # Best model selection
+                        best_model_name = comparison_df.index[0]
+                        st.success(f"🥇 Best performing model: **{best_model_name}**")
+                        
+                        if st.button("🔄 Switch to Best Model"):
+                            # Implementation would depend on having saved models
+                            st.info("Feature coming soon: Auto-switch to best performing model")
+                    
+                    else:  # Advanced Engineering
+                        st.info("🔬 Applying advanced feature engineering...")
+                        
+                        from utils.ml_engine import advanced_feature_engineering
+                        
+                        # Apply advanced features
+                        advanced_data = advanced_feature_engineering(
+                            training_data,
+                            add_technical_indicators=True,
+                            add_time_features=add_time_features,
+                            add_regime_features=add_volatility_regime
+                        )
+                        
+                        # Train with advanced features
+                        from utils.ml_engine import prepare_ml_dataset, train_xgboost_model
+                        X, y, features = prepare_ml_dataset(advanced_data, target_type, horizon)
+                        
+                        advanced_model = train_xgboost_model(X, y, features, model_type)
+                        
+                        st.success("✅ Advanced feature engineering completed!")
+                        
+                        # Compare performance
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("Original R²", f"{current_r2:.4f}")
+                            st.metric("Original Features", len(base_model['features']))
+                        
+                        with col2:
+                            new_r2 = advanced_model['metrics']['test_r2']
+                            st.metric("Advanced R²", f"{new_r2:.4f}")
+                            st.metric("Advanced Features", len(advanced_model['features']))
+                        
+                        improvement = new_r2 - current_r2
+                        if improvement > 0:
+                            st.success(f"🎉 Improvement: +{improvement:.4f} R²")
+                            if st.button("💾 Use Advanced Model"):
+                                st.session_state.trained_model = advanced_model
+                                st.success("✅ Model updated!")
+                                st.rerun()
+                        else:
+                            st.warning("⚠️ No significant improvement with advanced features")
+                
+                except Exception as e:
+                    st.error(f"Optimization failed: {str(e)}")
+                    st.info("💡 Try reducing the complexity or check your data quality")
+
+with tab4:  # Update tab4 to be tab4 instead of tab3
     st.title("📊 Model Analysis")
     st.markdown("Analyze and compare trained models")
     

@@ -77,6 +77,127 @@ class MLStrategy(Strategy):
             self.position.close()
 
 
+class BacktestEngine:
+    """
+    Enhanced backtesting engine for strategy evaluation
+    """
+    
+    def __init__(self, initial_capital=10000, commission=0.001):
+        """
+        Initialize the backtest engine
+        
+        Parameters:
+        -----------
+        initial_capital : float
+            Starting capital for backtesting
+        commission : float
+            Commission rate per trade (e.g., 0.001 = 0.1%)
+        """
+        self.initial_capital = initial_capital
+        self.commission = commission
+        
+    def run_backtest(self, data, strategy):
+        """
+        Run backtest using the provided strategy
+        
+        Parameters:
+        -----------
+        data : pandas.DataFrame
+            OHLCV price data
+        strategy : Strategy object
+            Trading strategy with generate_signals method
+            
+        Returns:
+        --------
+        pandas.DataFrame
+            Backtest results with portfolio performance
+        """
+        try:
+            print(f"🔄 Running backtest with {strategy.name}")
+            print(f"📊 Data period: {data.index[0]} to {data.index[-1]}")
+            print(f"💰 Initial capital: ${self.initial_capital:,}")
+            print(f"📈 Commission: {self.commission*100:.3f}%")
+            
+            # Generate strategy signals
+            df_with_signals = strategy.generate_signals(data)
+            
+            # Initialize portfolio tracking
+            df_with_signals['cash'] = self.initial_capital
+            df_with_signals['shares'] = 0.0
+            df_with_signals['portfolio_value'] = self.initial_capital
+            df_with_signals['trade_value'] = 0.0
+            df_with_signals['commission_paid'] = 0.0
+            
+            current_cash = self.initial_capital
+            current_shares = 0.0
+            total_commission = 0.0
+            
+            # Process each trading signal
+            for i in range(1, len(df_with_signals)):
+                signal = df_with_signals.iloc[i]['signal']
+                price = df_with_signals.iloc[i]['Close']
+                prev_position = df_with_signals.iloc[i-1]['position']
+                current_position = df_with_signals.iloc[i]['position']
+                
+                trade_value = 0.0
+                commission_cost = 0.0
+                
+                # Execute trades based on position changes
+                if current_position != prev_position:
+                    if current_position == 1 and prev_position == 0:
+                        # Buy: Use all available cash
+                        shares_to_buy = current_cash / price
+                        commission_cost = shares_to_buy * price * self.commission
+                        
+                        if current_cash > commission_cost:
+                            current_shares = (current_cash - commission_cost) / price
+                            trade_value = current_shares * price
+                            current_cash = 0.0
+                            total_commission += commission_cost
+                            
+                            print(f"  📈 BUY at {price:.4f}: {current_shares:.2f} shares, commission: ${commission_cost:.2f}")
+                    
+                    elif current_position == 0 and prev_position == 1:
+                        # Sell: Sell all shares
+                        if current_shares > 0:
+                            trade_value = current_shares * price
+                            commission_cost = trade_value * self.commission
+                            current_cash = trade_value - commission_cost
+                            current_shares = 0.0
+                            total_commission += commission_cost
+                            
+                            print(f"  📉 SELL at {price:.4f}: ${trade_value:.2f}, commission: ${commission_cost:.2f}")
+                
+                # Update portfolio values
+                df_with_signals.iloc[i, df_with_signals.columns.get_loc('cash')] = current_cash
+                df_with_signals.iloc[i, df_with_signals.columns.get_loc('shares')] = current_shares
+                df_with_signals.iloc[i, df_with_signals.columns.get_loc('trade_value')] = trade_value
+                df_with_signals.iloc[i, df_with_signals.columns.get_loc('commission_paid')] = commission_cost
+                
+                # Calculate total portfolio value
+                portfolio_value = current_cash + (current_shares * price)
+                df_with_signals.iloc[i, df_with_signals.columns.get_loc('portfolio_value')] = portfolio_value
+            
+            # Calculate performance metrics
+            final_value = df_with_signals['portfolio_value'].iloc[-1]
+            total_return = ((final_value - self.initial_capital) / self.initial_capital) * 100
+            
+            # Count trades
+            trades = df_with_signals['signal'].abs().sum()
+            
+            print(f"\n📊 Backtest Results:")
+            print(f"   Final portfolio value: ${final_value:,.2f}")
+            print(f"   Total return: {total_return:.2f}%")
+            print(f"   Total trades: {trades}")
+            print(f"   Total commission paid: ${total_commission:.2f}")
+            
+            return df_with_signals
+            
+        except Exception as e:
+            print(f"❌ Backtest failed: {e}")
+            return None
+
+
 def run_backtest(data, strategy_class, initial_cash=10000, commission=0.002, **kwargs):
     """
     Run backtest with given strategy and parameters
