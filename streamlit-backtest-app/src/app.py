@@ -2,11 +2,17 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from utils.backtest_engine import SmaCross, run_backtest, prepare_stats_for_display
+from utils.backtest_engine import SmaCross, MLStrategy, run_backtest, prepare_stats_for_display
+from utils.ml_engine import (
+    download_market_data, create_comprehensive_features, train_ml_model,
+    fetch_training_data, run_training_pipeline, load_trained_model, 
+    train_xgboost_model, prepare_ml_dataset, fetch_cryptocompare_data
+)
+from utils.data_fetcher import DataFetcher, fetch_cryptocompare_data
 
 st.set_page_config(
     page_title="Trading Strategy Backtester",
@@ -14,163 +20,649 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("📈 Trading Strategy Backtester")
-st.markdown("Test your trading strategies with historical data")
+# Add tabs for different functionalities
+tab1, tab2, tab3 = st.tabs(["📈 Backtest", "🤖 ML Training", "📊 Model Analysis"])
 
-# Sidebar for parameters
-with st.sidebar:
-    st.header("Configuration")
-    
-    # Stock selection
-    symbol = st.text_input("Stock Symbol", value="AAPL", help="Enter a valid stock ticker")
-    
-    # Date range
-    col1, col2 = st.columns(2)
-    with col1:
-        start_date = st.date_input("Start Date", value=datetime.now() - timedelta(days=365))
-    with col2:
-        end_date = st.date_input("End Date", value=datetime.now())
-    
-    # Strategy parameters
-    st.subheader("Strategy Parameters")
-    short_ma = st.slider("Short MA Period", min_value=5, max_value=50, value=10)
-    long_ma = st.slider("Long MA Period", min_value=20, max_value=200, value=20)
-    
-    # Backtest parameters
-    st.subheader("Backtest Parameters")
-    initial_cash = st.number_input("Initial Cash ($)", min_value=1000, value=10000, step=1000)
-    commission = st.slider("Commission (%)", min_value=0.0, max_value=1.0, value=0.2, step=0.1) / 100
-    
-    run_backtest_btn = st.button("Run Backtest", type="primary")
+with tab1:
+    st.title("📈 Trading Strategy Backtester")
+    st.markdown("Test your trading strategies with historical data")
 
-# Main content area
-if run_backtest_btn:
-    try:
-        # Download data
-        with st.spinner(f"Downloading {symbol} data..."):
-            data = yf.download(symbol, start=start_date, end=end_date, auto_adjust=False)
+    # Sidebar for parameters
+    with st.sidebar:
+        st.header("Configuration")
         
-        if data.empty:
-            st.error(f"No data found for symbol {symbol}")
-            st.stop()
+        # API Configuration
+        with st.expander("🔧 API Settings"):
+            api_key = st.text_input("CryptoCompare API Key (Optional)", type="password", 
+                                   help="Get free API key from cryptocompare.com")
+            use_crypto_data = st.checkbox("Force CryptoCompare API", 
+                                        help="Use CryptoCompare even for traditional assets")
         
-        # Prepare data for backtesting
-        data = data.dropna()
+        # Stock selection
+        symbol = st.text_input("Asset Symbol", value="BTC", help="Enter crypto (BTC, ETH) or stock ticker (AAPL, GOOGL)")
         
-        # Ensure we have the expected column structure
-        if isinstance(data.columns, pd.MultiIndex):
-            # Flatten MultiIndex columns if present
-            data.columns = [col[0] if col[1] == symbol else col[1] for col in data.columns]
+        # Data interval
+        data_interval = st.selectbox("Data Interval", ["1h", "1d"], help="1h for crypto, 1d for stocks")
         
-        # Create custom strategy class with user parameters
-        class CustomSmaCross(SmaCross):
-            n1 = short_ma
-            n2 = long_ma
-        
-        # Run backtest
-        with st.spinner("Running backtest..."):
-            stats, bt = run_backtest(data, CustomSmaCross, initial_cash, commission)
-        
-        # Display results
-        col1, col2 = st.columns([2, 1])
-        
+        # Backtesting date range
+        st.subheader("📅 Backtesting Period")
+        col1, col2 = st.columns(2)
         with col1:
-            st.subheader("📊 Backtest Results")
+            start_date = st.date_input("Backtest Start", value=datetime.now() - timedelta(days=90), key="backtest_start")
+        with col2:
+            end_date = st.date_input("Backtest End", value=datetime.now(), key="backtest_end")
+        
+        # Strategy selection
+        st.subheader("Strategy Selection")
+        strategy_options = ["Simple MA Cross", "Machine Learning", "ML with Pre-trained Model"]
+        strategy_type = st.selectbox("Choose Strategy", strategy_options)
+        
+        # Strategy parameters
+        if strategy_type == "Simple MA Cross":
+            st.subheader("Strategy Parameters")
+            short_ma = st.slider("Short MA Period", min_value=5, max_value=50, value=10)
+            long_ma = st.slider("Long MA Period", min_value=20, max_value=200, value=20)
             
-            # Create price chart with signals
-            fig = make_subplots(
-                rows=2, cols=1,
-                shared_xaxes=True,
-                vertical_spacing=0.05,
-                subplot_titles=('Price & Moving Averages', 'Portfolio Value'),
-                row_heights=[0.7, 0.3]
-            )
+        elif strategy_type == "Machine Learning":
+            st.subheader("🎯 Training Data Period")
             
-            # Price and moving averages
-            fig.add_trace(
-                go.Scatter(x=data.index, y=data['Close'], name='Close Price', line=dict(color='blue')),
-                row=1, col=1
-            )
-            
-            # Calculate MAs for display
-            data[f'SMA_{short_ma}'] = data['Close'].rolling(short_ma).mean()
-            data[f'SMA_{long_ma}'] = data['Close'].rolling(long_ma).mean()
-            
-            fig.add_trace(
-                go.Scatter(x=data.index, y=data[f'SMA_{short_ma}'], name=f'SMA {short_ma}', line=dict(color='orange')),
-                row=1, col=1
-            )
-            
-            fig.add_trace(
-                go.Scatter(x=data.index, y=data[f'SMA_{long_ma}'], name=f'SMA {long_ma}', line=dict(color='red')),
-                row=1, col=1
-            )
-            
-            # Portfolio value (if available in stats)
-            if hasattr(stats, '_equity_curve'):
-                equity_curve = stats._equity_curve['Equity']
-                fig.add_trace(
-                    go.Scatter(x=equity_curve.index, y=equity_curve, name='Portfolio Value', line=dict(color='green')),
-                    row=2, col=1
+            # Training date range with validation
+            train_col1, train_col2 = st.columns(2)
+            with train_col1:
+                train_start = st.date_input(
+                    "Training Start", 
+                    value=datetime.now() - timedelta(days=730), 
+                    key="ml_train_start",
+                    help="Must be before backtest start date"
+                )
+            with train_col2:
+                train_end = st.date_input(
+                    "Training End", 
+                    value=start_date - timedelta(days=1), 
+                    key="ml_train_end",
+                    help="Must be before backtest start date"
                 )
             
-            fig.update_layout(height=600, title=f"{symbol} - Strategy Performance")
-            st.plotly_chart(fig, use_container_width=True)
-        
-        with col2:
-            st.subheader("📈 Performance Metrics")
+            # Validation checks
+            date_validation_errors = []
             
-            # Prepare and display stats
-            stats_df = prepare_stats_for_display(stats)
-            st.dataframe(stats_df, use_container_width=True, hide_index=True)
+            if train_start >= start_date:
+                date_validation_errors.append("Training start must be before backtest start")
+            
+            if train_end >= start_date:
+                date_validation_errors.append("Training end must be before backtest start")
+            
+            if train_start >= train_end:
+                date_validation_errors.append("Training start must be before training end")
+            
+            if (train_end - train_start).days < 30:
+                date_validation_errors.append("Training period should be at least 30 days")
+            
+            if date_validation_errors:
+                for error in date_validation_errors:
+                    st.error(f"❌ {error}")
+            else:
+                st.success("✅ Training dates are valid")
+                
+                # Show training period info
+                training_days = (train_end - train_start).days
+                st.info(f"📊 Training period: {training_days} days")
+            
+            st.subheader("ML Strategy Parameters")
+            confidence_threshold = st.slider("Confidence Threshold", min_value=0.5, max_value=0.9, value=0.6, step=0.05)
+            
+            # ML model parameters
+            st.subheader("Model Parameters")
+            target_type = st.selectbox("Target Type", ["price_diff_pct", "price_direction"], key="backtest_target")
+            horizon = st.slider("Prediction Horizon", min_value=1, max_value=12, value=1, key="backtest_horizon")
+            model_type = st.selectbox("Model Type", ["regression", "classification"], key="backtest_model_type")
+            
+        else:  # ML with Pre-trained Model
+            st.subheader("Pre-trained Model")
+            model_file = st.file_uploader("Upload Model File", type=['pkl', 'joblib'])
+            confidence_threshold = st.slider("Confidence Threshold", min_value=0.5, max_value=0.9, value=0.6, step=0.05)
+            
+            # Option to use session state model
+            if 'trained_model' in st.session_state:
+                use_session_model = st.checkbox("Use Last Trained Model", 
+                                               help="Use the model from the ML Training tab")
+            else:
+                use_session_model = False
         
-        # Additional metrics in expandable sections
-        with st.expander("📋 Detailed Analysis"):
-            col1, col2, col3 = st.columns(3)
+        # Backtest parameters
+        st.subheader("Backtest Parameters")
+        initial_cash = st.number_input("Initial Cash ($)", min_value=1000, value=10000, step=1000)
+        commission = st.slider("Commission (%)", min_value=0.0, max_value=1.0, value=0.2, step=0.1) / 100
+        
+        # Disable run button if there are validation errors for ML strategy
+        can_run_backtest = True
+        if strategy_type == "Machine Learning" and date_validation_errors:
+            can_run_backtest = False
+            
+        run_backtest_btn = st.button("Run Backtest", type="primary", disabled=not can_run_backtest)
+
+    # Main content area
+    if run_backtest_btn:
+        try:
+            # Convert date objects to datetime objects for proper handling
+            start_date_dt = datetime.combine(start_date, datetime.min.time()) if isinstance(start_date, date) else start_date
+            end_date_dt = datetime.combine(end_date, datetime.min.time()) if isinstance(end_date, date) else end_date
+            
+            # Download data using enhanced data fetcher
+            with st.spinner(f"Downloading {symbol} data..."):
+                fetcher = DataFetcher(cryptocompare_api_key=api_key)
+                
+                if strategy_type in ["Machine Learning", "ML with Pre-trained Model"]:
+                    if strategy_type == "Machine Learning":
+                        # Convert training dates to datetime objects
+                        train_start_dt = datetime.combine(train_start, datetime.min.time()) if isinstance(train_start, date) else train_start
+                        train_end_dt = datetime.combine(train_end, datetime.min.time()) if isinstance(train_end, date) else train_end
+                        
+                        # Download training data plus backtest data with enhanced fetcher
+                        data_start = min(train_start_dt, start_date_dt - timedelta(days=7))
+                        data = fetcher.fetch_historical_data(symbol, data_start, end_date_dt, data_interval)
+                        
+                        # Convert dates to pandas timestamps for proper comparison
+                        train_start_ts = pd.Timestamp(train_start_dt)
+                        train_end_ts = pd.Timestamp(train_end_dt)
+                        backtest_start_ts = pd.Timestamp(start_date_dt)
+                        backtest_end_ts = pd.Timestamp(end_date_dt)
+                        
+                        # Validate we have enough data
+                        training_data = data[(data.index >= train_start_ts) & (data.index <= train_end_ts)]
+                        backtest_data_check = data[(data.index >= backtest_start_ts) & (data.index <= backtest_end_ts)]
+                        
+                        if len(training_data) < 100:
+                            st.error(f"❌ Insufficient training data: {len(training_data)} points. Need at least 100.")
+                            
+                            # Show data availability info
+                            if not data.empty:
+                                available_start = data.index.min().date()
+                                available_end = data.index.max().date()
+                                
+                                st.warning(f"""
+                                **📊 Data Availability:**
+                                - Available: {available_start} to {available_end} ({len(data)} points)
+                                - Requested training: {train_start} to {train_end}
+                                - Requested backtest: {start_date} to {end_date}
+                                
+                                **💡 Solutions:**
+                                1. **Get API Key**: Free CryptoCompare API key provides more historical data
+                                2. **Adjust dates**: Use available data range shown above
+                                3. **Try stocks**: Traditional assets (AAPL, GOOGL) have longer history
+                                4. **Use daily data**: Switch to '1d' interval for maximum history
+                                """)
+                            else:
+                                st.error("❌ No data available for this symbol/period combination")
+                            
+                            st.stop()
+                        
+                        if len(backtest_data_check) < 10:
+                            st.error(f"❌ Insufficient backtest data: {len(backtest_data_check)} points. Need at least 10.")
+                            st.stop()
+                        
+                        st.success(f"✅ Enhanced data fetch: {len(training_data)} training points, {len(backtest_data_check)} backtest points")
+                        
+                    else:
+                        # Just download backtest period data for pre-trained model
+                        data = fetcher.fetch_historical_data(symbol, start_date_dt, end_date_dt, data_interval)
+                else:
+                    # Traditional strategy - use enhanced data fetcher
+                    data = fetcher.fetch_historical_data(symbol, start_date_dt, end_date_dt, data_interval)
+            
+            if data.empty:
+                st.error(f"No data found for symbol {symbol}")
+                st.stop()
+            
+            # Prepare data for backtesting
+            data = data.dropna()
+            
+            # Strategy execution
+            if strategy_type == "Simple MA Cross":
+                # Create custom strategy class with user parameters
+                class CustomSmaCross(SmaCross):
+                    n1 = short_ma
+                    n2 = long_ma
+                
+                # Run backtest
+                with st.spinner("Running backtest..."):
+                    backtest_start_ts = pd.Timestamp(start_date_dt)
+                    backtest_end_ts = pd.Timestamp(end_date_dt)
+                    backtest_data = data[(data.index >= backtest_start_ts) & (data.index <= backtest_end_ts)]
+                    stats, bt = run_backtest(backtest_data, CustomSmaCross, initial_cash, commission)
+            
+            elif strategy_type == "Machine Learning":
+                # Split data into training and backtesting periods
+                train_start_ts = pd.Timestamp(train_start_dt)
+                train_end_ts = pd.Timestamp(train_end_dt)
+                backtest_start_ts = pd.Timestamp(start_date_dt)
+                backtest_end_ts = pd.Timestamp(end_date_dt)
+                
+                training_data = data[(data.index >= train_start_ts) & (data.index <= train_end_ts)]
+                backtest_data = data[(data.index >= backtest_start_ts) & (data.index <= backtest_end_ts)]
+                
+                # Train model on training data
+                with st.spinner("Training XGBoost model on historical data..."):
+                    st.info(f"🔄 Training on {len(training_data)} data points from {train_start} to {train_end}")
+                    X, y, features = prepare_ml_dataset(training_data, target_type=target_type, horizon=horizon)
+                    model_info = train_xgboost_model(X, y, features, model_type=model_type)
+                
+                # Run ML backtest on separate period
+                with st.spinner("Running ML backtest on out-of-sample data..."):
+                    st.info(f"🎯 Backtesting on {len(backtest_data)} data points from {start_date} to {end_date}")
+                    stats, bt = run_backtest(
+                        backtest_data, 
+                        MLStrategy, 
+                        initial_cash, 
+                        commission,
+                        model_info=model_info,
+                        confidence_threshold=confidence_threshold
+                    )
+                
+                # Display ML model performance
+                st.subheader("🤖 ML Model Performance")
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    if 'train_r2' in model_info['metrics']:
+                        st.metric("Training R²", f"{model_info['metrics']['train_r2']:.3f}")
+                    else:
+                        st.metric("Training Acc", f"{model_info['metrics'].get('train_accuracy', 0):.3f}")
+                with col2:
+                    if 'test_r2' in model_info['metrics']:
+                        st.metric("Test R²", f"{model_info['metrics']['test_r2']:.3f}")
+                    else:
+                        st.metric("Test Acc", f"{model_info['metrics'].get('test_accuracy', 0):.3f}")
+                with col3:
+                    st.metric("Features", len(model_info['features']))
+                with col4:
+                    if 'overfitting_score' in model_info['metrics']:
+                        st.metric("Overfitting", f"{model_info['metrics']['overfitting_score']:.3f}")
+                
+                # Show data split information
+                with st.expander("📊 Data Split Information"):
+                    split_col1, split_col2 = st.columns(2)
+                    with split_col1:
+                        st.metric("Training Period", f"{train_start} to {train_end}")
+                        st.metric("Training Data Points", len(training_data))
+                    with split_col2:
+                        st.metric("Backtest Period", f"{start_date} to {end_date}")
+                        st.metric("Backtest Data Points", len(backtest_data))
+            
+            else:  # ML with Pre-trained Model
+                model_info = None
+                
+                if use_session_model and 'trained_model' in st.session_state:
+                    # Use model from session state
+                    model_info = st.session_state.trained_model
+                    st.success("✅ Using model from training session")
+                    
+                elif model_file is not None:
+                    # Load uploaded model
+                    with st.spinner("Loading pre-trained model..."):
+                        import tempfile
+                        import os
+                        
+                        # Save uploaded file temporarily
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.pkl') as tmp_file:
+                            tmp_file.write(model_file.getvalue())
+                            tmp_path = tmp_file.name
+                        
+                        try:
+                            model_info = load_trained_model(tmp_path)
+                            os.unlink(tmp_path)  # Clean up temp file
+                            st.success("✅ Pre-trained model loaded successfully")
+                        except Exception as e:
+                            os.unlink(tmp_path)
+                            raise e
+                
+                if model_info is None:
+                    st.error("❌ No model available. Please upload a model file or train a model first.")
+                    st.stop()
+                
+                # Run ML backtest with pre-trained model
+                with st.spinner("Running ML backtest with pre-trained model..."):
+                    backtest_start_ts = pd.Timestamp(start_date_dt)
+                    backtest_end_ts = pd.Timestamp(end_date_dt)
+                    backtest_data = data[(data.index >= backtest_start_ts) & (data.index <= backtest_end_ts)]
+                    stats, bt = run_backtest(
+                        backtest_data, 
+                        MLStrategy, 
+                        initial_cash, 
+                        commission,
+                        model_info=model_info,
+                        confidence_threshold=confidence_threshold
+                    )
+                
+                # Display model info
+                st.subheader("🔍 Model Information")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.info(f"**Model Type:** {model_info['model_type']}")
+                with col2:
+                    st.info(f"**Features:** {len(model_info['features'])}")
+                with col3:
+                    if 'test_r2' in model_info['metrics']:
+                        st.info(f"**Test R²:** {model_info['metrics']['test_r2']:.3f}")
+                    elif 'test_accuracy' in model_info['metrics']:
+                        st.info(f"**Test Acc:** {model_info['metrics']['test_accuracy']:.3f}")
+        
+            # Display results
+            col1, col2 = st.columns([2, 1])
             
             with col1:
-                st.metric("Total Return", f"{stats['Return [%]']:.2f}%")
-                st.metric("Buy & Hold Return", f"{stats['Buy & Hold Return [%]']:.2f}%")
+                st.subheader("📊 Backtest Results")
+                
+                # Create price chart with signals
+                fig = make_subplots(
+                    rows=2, cols=1,
+                    shared_xaxes=True,
+                    vertical_spacing=0.05,
+                    subplot_titles=('Price & Moving Averages', 'Portfolio Value'),
+                    row_heights=[0.7, 0.3]
+                )
+                
+                # Price and moving averages
+                fig.add_trace(
+                    go.Scatter(x=data.index, y=data['Close'], name='Close Price', line=dict(color='blue')),
+                    row=1, col=1
+                )
+                
+                if strategy_type == "Simple MA Cross":
+                    # Calculate MAs for display
+                    data[f'SMA_{short_ma}'] = data['Close'].rolling(short_ma).mean()
+                    data[f'SMA_{long_ma}'] = data['Close'].rolling(long_ma).mean()
+                    
+                    fig.add_trace(
+                        go.Scatter(x=data.index, y=data[f'SMA_{short_ma}'], name=f'SMA {short_ma}', line=dict(color='orange')),
+                        row=1, col=1
+                    )
+                    
+                    fig.add_trace(
+                        go.Scatter(x=data.index, y=data[f'SMA_{long_ma}'], name=f'SMA {long_ma}', line=dict(color='red')),
+                        row=1, col=1
+                    )
+                
+                # Portfolio value (if available in stats)
+                if hasattr(stats, '_equity_curve'):
+                    equity_curve = stats._equity_curve['Equity']
+                    fig.add_trace(
+                        go.Scatter(x=equity_curve.index, y=equity_curve, name='Portfolio Value', line=dict(color='green')),
+                        row=2, col=1
+                    )
+                
+                fig.update_layout(height=600, title=f"{symbol} - Strategy Performance")
+                st.plotly_chart(fig, use_container_width=True)
             
             with col2:
-                st.metric("Sharpe Ratio", f"{stats['Sharpe Ratio']:.3f}")
-                st.metric("Max Drawdown", f"{stats['Max. Drawdown [%]']:.2f}%")
-            
-            with col3:
-                st.metric("Win Rate", f"{stats['Win Rate [%]']:.1f}%")
-                st.metric("# Trades", f"{stats['# Trades']}")
-        
-        # Show trades if available
-        if hasattr(stats, '_trades') and not stats._trades.empty:
-            with st.expander("🔍 Trade Details"):
-                trades_df = stats._trades.copy()
-                # Convert datetime columns to strings to avoid Arrow errors
-                for col in trades_df.columns:
-                    if trades_df[col].dtype == 'datetime64[ns]':
-                        trades_df[col] = trades_df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
-                    elif trades_df[col].dtype == 'timedelta64[ns]':
-                        trades_df[col] = trades_df[col].astype(str)
+                st.subheader("📈 Performance Metrics")
                 
-                st.dataframe(trades_df, use_container_width=True)
+                # Prepare and display stats
+                stats_df = prepare_stats_for_display(stats)
+                st.dataframe(stats_df, use_container_width=True, hide_index=True)
+            
+            # Additional metrics in expandable sections
+            with st.expander("📋 Detailed Analysis"):
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric("Total Return", f"{stats['Return [%]']:.2f}%")
+                    st.metric("Buy & Hold Return", f"{stats['Buy & Hold Return [%]']:.2f}%")
+                
+                with col2:
+                    st.metric("Sharpe Ratio", f"{stats['Sharpe Ratio']:.3f}")
+                    st.metric("Max Drawdown", f"{stats['Max. Drawdown [%]']:.2f}%")
+                
+                with col3:
+                    st.metric("Win Rate", f"{stats['Win Rate [%]']:.1f}%")
+                    st.metric("# Trades", f"{stats['# Trades']}")
+            
+            # Show trades if available
+            if hasattr(stats, '_trades') and not stats._trades.empty:
+                with st.expander("🔍 Trade Details"):
+                    trades_df = stats._trades.copy()
+                    # Convert datetime columns to strings to avoid Arrow errors
+                    for col in trades_df.columns:
+                        if trades_df[col].dtype == 'datetime64[ns]':
+                            trades_df[col] = trades_df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
+                        elif trades_df[col].dtype == 'timedelta64[ns]':
+                            trades_df[col] = trades_df[col].astype(str)
+                    
+                    st.dataframe(trades_df, use_container_width=True)
         
-    except Exception as e:
-        st.error(f"An error occurred: {str(e)}")
-        st.error("Please check your inputs and try again.")
+        except Exception as e:
+            st.error(f"An error occurred: {str(e)}")
+            
+            # Enhanced error handling with pagination info
+            if "No data found" in str(e) or "Error fetching" in str(e):
+                st.info("""
+                **💡 Enhanced Data Fetching Tips:**
+                - **Crypto symbols**: BTC, ETH, XRP, DOGE (now with full historical coverage via pagination)
+                - **Stock symbols**: AAPL, GOOGL, TSLA (extensive Yahoo Finance history)
+                - **API Key**: Get free CryptoCompare key for best historical coverage
+                - **Intervals**: '1d' for maximum history, '1h' for recent detailed data
+                
+                **New Features:**
+                - Automatic pagination retrieves complete historical datasets
+                - Intelligent fallback between CryptoCompare and Yahoo Finance
+                - Enhanced coverage analysis and validation
+                """)
 
-else:
-    # Default view when no backtest has been run
-    st.info("👈 Configure your strategy parameters in the sidebar and click 'Run Backtest' to start.")
+    else:
+        # Default view when no backtest has been run
+        st.info("👈 Configure your strategy parameters in the sidebar and click 'Run Backtest' to start.")
+        
+        # Show sample data
+        st.subheader("📖 How to use this app:")
+        st.markdown("""
+        **Available Strategies:**
+        
+        1. **Simple MA Cross**: Traditional moving average crossover
+           - Buy when short MA crosses above long MA
+           - Sell when long MA crosses above short MA
+        
+        2. **Machine Learning**: Train a new XGBoost model
+           - Set training period (must be before backtest period)
+           - Uses comprehensive feature engineering
+           - Predicts price movements or direction
+           - Trains on historical data, tests on future data
+        
+        3. **ML with Pre-trained Model**: Use existing models
+           - Upload your own trained model files
+           - Use models from the ML Training tab
+           - Perfect for testing different model configurations
+        
+        **Important for ML Strategies:**
+        - Training data must be from BEFORE the backtesting period
+        - This prevents data leakage and ensures realistic results
+        - Minimum 30 days training period recommended
+        
+        **Getting Started:**
+        1. Select an asset symbol (crypto or stock)
+        2. Set your backtesting date range
+        3. For ML: Set training dates (before backtest dates)
+        4. Choose your strategy type and configure parameters
+        5. Run backtest and analyze results
+        """)
+
+with tab2:
+    st.title("🤖 ML Model Training")
+    st.markdown("Train XGBoost models for price prediction")
     
-    # Show sample data
-    st.subheader("📖 How to use this app:")
-    st.markdown("""
-    1. **Select a stock symbol** (e.g., AAPL, GOOGL, TSLA)
-    2. **Choose your date range** for the backtest
-    3. **Adjust strategy parameters** (Moving Average periods)
-    4. **Set backtest parameters** (initial cash, commission)
-    5. **Click 'Run Backtest'** to see results
+    # API Configuration for training
+    with st.expander("🔧 Data Source Settings"):
+        train_api_key = st.text_input("CryptoCompare API Key", type="password", key="train_api")
+        st.info("💡 Get a free API key from cryptocompare.com for better rate limits and more historical data")
     
-    The strategy uses a Simple Moving Average crossover:
-    - **Buy signal**: When short MA crosses above long MA
-    - **Sell signal**: When long MA crosses above short MA
-    """)
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        st.subheader("Training Configuration")
+        
+        # Training parameters
+        train_symbol = st.text_input("Training Symbol", value="BTC", key="train_symbol", 
+                                   help="Crypto: BTC, ETH, DOGE | Stocks: AAPL, GOOGL")
+        
+        # Training date range
+        train_col1, train_col2 = st.columns(2)
+        with train_col1:
+            train_start = st.date_input("Training Start", value=datetime.now() - timedelta(days=730), key="train_start")
+        with train_col2:
+            train_end = st.date_input("Training End", value=datetime.now(), key="train_end")
+        
+        # Model parameters
+        st.subheader("Model Parameters")
+        target_type = st.selectbox("Target Type", ["price_diff_pct", "price_diff", "price_direction"])
+        horizon = st.slider("Prediction Horizon", min_value=1, max_value=24, value=1)
+        model_type = st.selectbox("Model Type", ["regression", "classification"])
+        interval = st.selectbox("Data Interval", ["1h", "1d", "4h"])
+        
+        # Training controls
+        test_size = st.slider("Test Size", min_value=0.1, max_value=0.4, value=0.2, step=0.05)
+        
+        train_model_btn = st.button("🚀 Train Model", type="primary")
+        
+    with col2:
+        st.subheader("Model Management")
+        
+        # Save/Load options
+        save_model = st.checkbox("Save Trained Model")
+        if save_model:
+            model_name = st.text_input("Model Name", value=f"{train_symbol}_{target_type}_{horizon}h")
+        
+        # Quick training presets
+        st.subheader("Quick Presets")
+        if st.button("📈 Price Direction (1h)"):
+            st.session_state.preset_config = {
+                'target_type': 'price_direction', 
+                'horizon': 1, 
+                'model_type': 'classification',
+                'interval': '1h'
+            }
+        
+        if st.button("💰 Price Change % (4h)"):
+            st.session_state.preset_config = {
+                'target_type': 'price_diff_pct', 
+                'horizon': 4, 
+                'model_type': 'regression',
+                'interval': '4h'
+            }
+
+    # Training execution
+    if train_model_btn:
+        try:
+            # Convert date objects to datetime objects
+            train_start_dt = datetime.combine(train_start, datetime.min.time()) if isinstance(train_start, date) else train_start
+            train_end_dt = datetime.combine(train_end, datetime.min.time()) if isinstance(train_end, date) else train_end
+            
+            with st.spinner("🔄 Running complete training pipeline..."):
+                # Determine save path
+                save_path = None
+                if save_model:
+                    save_path = f"models/{model_name}.pkl"
+                    
+                # Run training pipeline with API key
+                model_info, training_data = run_training_pipeline(
+                    symbol=train_symbol,
+                    start_date=train_start_dt,
+                    end_date=train_end_dt,
+                    interval=interval,
+                    target_type=target_type,
+                    horizon=horizon,
+                    model_type=model_type,
+                    save_model_path=save_path,
+                    api_key=train_api_key
+                )
+                
+                # Store in session state
+                st.session_state.trained_model = model_info
+                st.session_state.training_data = training_data
+                
+                st.success("✅ Model training completed!")
+                
+                # Display results
+                st.subheader("📊 Training Results")
+                
+                metrics_col1, metrics_col2, metrics_col3 = st.columns(3)
+                with metrics_col1:
+                    if model_type == 'regression':
+                        st.metric("Training R²", f"{model_info['metrics']['train_r2']:.4f}")
+                        st.metric("Test R²", f"{model_info['metrics']['test_r2']:.4f}")
+                    else:
+                        st.metric("Training Accuracy", f"{model_info['metrics']['train_accuracy']:.4f}")
+                        st.metric("Test Accuracy", f"{model_info['metrics']['test_accuracy']:.4f}")
+                
+                with metrics_col2:
+                    if model_type == 'regression':
+                        st.metric("Training RMSE", f"{model_info['metrics']['train_rmse']:.4f}")
+                        st.metric("Test RMSE", f"{model_info['metrics']['test_rmse']:.4f}")
+                        st.metric("Test MAE", f"{model_info['metrics']['test_mae']:.4f}")
+                
+                with metrics_col3:
+                    st.metric("Features Used", len(model_info['features']))
+                    st.metric("Training Samples", len(training_data))
+                
+                # Feature importance
+                if hasattr(model_info, 'feature_importance'):
+                    st.subheader("🎯 Feature Importance")
+                    top_features = model_info['feature_importance'].head(10)
+                    
+                    import plotly.express as px
+                    fig = px.bar(top_features, x='importance', y='feature', orientation='h')
+                    fig.update_layout(height=400)
+                    st.plotly_chart(fig, use_container_width=True)
+                
+        except Exception as e:
+            st.error(f"Training failed: {str(e)}")
+            
+            # Show helpful error messages
+            if "API" in str(e) or "rate limit" in str(e).lower():
+                st.warning("🔑 Consider getting a CryptoCompare API key for better access to historical data")
+            elif "symbol" in str(e).lower():
+                st.info("💡 Try different symbols: BTC, ETH for crypto or AAPL, GOOGL for stocks")
+
+with tab3:
+    st.title("📊 Model Analysis")
+    st.markdown("Analyze and compare trained models")
+    
+    if 'trained_model' in st.session_state:
+        model_info = st.session_state.trained_model
+        
+        st.subheader("🔍 Model Details")
+        
+        # Model info
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.info(f"**Model Type:** {model_info['model_type']}")
+            st.info(f"**Features:** {len(model_info['features'])}")
+        with col2:
+            if 'test_r2' in model_info['metrics']:
+                st.info(f"**Test R²:** {model_info['metrics']['test_r2']:.4f}")
+            if 'test_accuracy' in model_info['metrics']:
+                st.info(f"**Test Accuracy:** {model_info['metrics']['test_accuracy']:.4f}")
+        with col3:
+            st.info(f"**Test Samples:** {len(model_info['X_test'])}")
+        
+        # Feature list
+        with st.expander("📋 Model Features"):
+            features_df = pd.DataFrame(model_info['features'], columns=['Feature'])
+            st.dataframe(features_df, use_container_width=True)
+        
+        # Predictions vs Actual
+        if 'y_test' in model_info and 'y_pred' in model_info:
+            st.subheader("🎯 Predictions vs Actual")
+            
+            pred_df = pd.DataFrame({
+                'Actual': model_info['y_test'],
+                'Predicted': model_info['y_pred']
+            })
+            
+            import plotly.express as px
+            fig = px.scatter(pred_df, x='Actual', y='Predicted', 
+                           title='Predictions vs Actual Values')
+            fig.add_trace(go.Scatter(x=[pred_df['Actual'].min(), pred_df['Actual'].max()],
+                                   y=[pred_df['Actual'].min(), pred_df['Actual'].max()],
+                                   mode='lines', name='Perfect Prediction'))
+            st.plotly_chart(fig, use_container_width=True)
+        
+    else:
+        st.info("No trained model available. Train a model in the ML Training tab first.")

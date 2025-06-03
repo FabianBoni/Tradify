@@ -1,5 +1,12 @@
 streamlit
-backtesting
 pandas
-matplotlib
 numpy
+yfinance
+plotly
+scikit-learn
+xgboost
+ta
+joblib
+requests
+matplotlib
+seaborn
