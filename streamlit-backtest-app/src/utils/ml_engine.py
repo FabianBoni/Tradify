@@ -9,6 +9,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 import joblib
 import warnings
+import os
 warnings.filterwarnings('ignore')
 
 def download_market_data(symbol, start_date, end_date, interval='1d', api_key=None):
@@ -629,275 +630,293 @@ def run_training_pipeline(symbol, start_date, end_date, interval='1h',
     
     return model_info, data
 
-def optimize_xgboost_hyperparameters(data, target_type, horizon, param_grid, cv_folds=5, method='grid_search'):
+def optimize_xgboost_hyperparameters(training_data, target_type, horizon, param_grid, cv_folds=5, method='grid_search'):
     """
-    Optimize XGBoost hyperparameters using various methods with updated API
+    Optimize XGBoost hyperparameters using various methods
     """
-    from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
-    from sklearn.metrics import r2_score, mean_squared_error
-    import xgboost as xgb
-    
-    # Ensure we have a DataFrame
-    if isinstance(data, np.ndarray):
-        raise ValueError("Data must be a pandas DataFrame for optimization")
-    
-    # Prepare data
-    X, y, features = prepare_ml_dataset(data, target_type, horizon)
-    
-    # Split for validation
-    split_idx = int(len(X) * 0.8)
-    X_train, X_val = X[:split_idx], X[split_idx:]
-    y_train, y_val = y[:split_idx], y[split_idx:]
-    
-    # Base XGBoost model with early stopping in init
-    base_model = xgb.XGBRegressor(
-        random_state=42,
-        n_jobs=-1,
-        early_stopping_rounds=10,
-        eval_metric='rmse'
-    )
-    
-    # Choose optimization method
-    if method == 'grid_search':
-        search = GridSearchCV(
-            base_model,
-            param_grid,
-            cv=cv_folds,
-            scoring='r2',
-            n_jobs=-1,
-            verbose=1
-        )
-    elif method == 'random_search':
-        search = RandomizedSearchCV(
-            base_model,
-            param_grid,
-            n_iter=20,
-            cv=cv_folds,
-            scoring='r2',
-            n_jobs=-1,
-            random_state=42,
-            verbose=1
-        )
-    else:  # bayesian_optimization
-        # For Bayesian optimization, we'd need optuna or similar
-        # Simplified version using random search for now
-        search = RandomizedSearchCV(
-            base_model,
-            param_grid,
-            n_iter=30,
-            cv=cv_folds,
-            scoring='r2',
-            n_jobs=-1,
-            random_state=42
-        )
-    
-    # Fit the search - use fit_params for eval_set
-    search.fit(
-        X_train, y_train,
-        eval_set=[(X_val, y_val)],
-        verbose=False
-    )
-    
-    # Return results
-    return search.best_params_, {
-        'best_score': search.best_score_,
-        'cv_results': search.cv_results_
-    }
+    try:
+        from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
+        from sklearn.metrics import make_scorer, r2_score, accuracy_score
+        
+        # Prepare dataset
+        X, y, features = prepare_ml_dataset(training_data, target_type, horizon)
+        
+        # Create base model
+        if target_type == 'price_direction':
+            from xgboost import XGBClassifier
+            base_model = XGBClassifier(random_state=42)
+            scoring = make_scorer(accuracy_score)
+        else:
+            from xgboost import XGBRegressor
+            base_model = XGBRegressor(random_state=42)
+            scoring = make_scorer(r2_score)
+        
+        # Perform hyperparameter search
+        if method == 'grid_search':
+            search = GridSearchCV(base_model, param_grid, cv=cv_folds, scoring=scoring, n_jobs=-1)
+        else:  # random_search
+            search = RandomizedSearchCV(base_model, param_grid, cv=cv_folds, scoring=scoring, n_jobs=-1, n_iter=20)
+        
+        search.fit(X, y)
+        
+        return search.best_params_, {'best_score': search.best_score_}
+        
+    except Exception as e:
+        print(f"Hyperparameter optimization failed: {e}")
+        return {}, {'best_score': 0}
 
-def optimize_feature_selection(data, target_type, horizon, method='rfe', n_features=15):
+def optimize_feature_selection(training_data, target_type, horizon, selection_method, n_features=15):
     """
     Optimize feature selection using various methods
     """
-    from sklearn.feature_selection import RFE, SelectKBest, f_regression
-    from sklearn.ensemble import RandomForestRegressor
-    import xgboost as xgb
-    
-    # Ensure we have a DataFrame
-    if isinstance(data, np.ndarray):
-        raise ValueError("Data must be a pandas DataFrame for feature selection")
-    
-    # Prepare data
-    X, y, features = prepare_ml_dataset(data, target_type, horizon)
-    
-    if method.lower() == 'recursive_feature_elimination' or method.lower() == 'rfe':
-        # Use Random Forest for feature selection
-        estimator = RandomForestRegressor(n_estimators=50, random_state=42)
-        selector = RFE(estimator, n_features_to_select=n_features)
-        X_selected = selector.fit_transform(X, y)
-        selected_features = [features[i] for i in range(len(features)) if selector.support_[i]]
+    try:
+        from sklearn.feature_selection import RFE, SelectKBest, f_regression, f_classif
+        from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
         
-    elif method.lower() == 'feature_importance':
-        # Use XGBoost feature importance
-        model = xgb.XGBRegressor(n_estimators=100, random_state=42)
-        model.fit(X, y)
+        # Prepare enhanced dataset
+        enhanced_data = create_comprehensive_features(training_data)
+        X, y, features = prepare_ml_dataset(enhanced_data, target_type, horizon)
         
-        # Get feature importance
-        importance_scores = model.feature_importances_
-        feature_importance = list(zip(features, importance_scores))
-        feature_importance.sort(key=lambda x: x[1], reverse=True)
+        # Select method
+        if selection_method == "Recursive Feature Elimination":
+            if target_type == 'price_direction':
+                estimator = RandomForestClassifier(n_estimators=50, random_state=42)
+            else:
+                estimator = RandomForestRegressor(n_estimators=50, random_state=42)
+            
+            selector = RFE(estimator, n_features_to_select=n_features)
+            X_selected = selector.fit_transform(X, y)
+            selected_features = [features[i] for i in range(len(features)) if selector.support_[i]]
+            
+        elif selection_method == "Feature Importance":
+            if target_type == 'price_direction':
+                model = RandomForestClassifier(n_estimators=100, random_state=42)
+                scoring_func = f_classif
+            else:
+                model = RandomForestRegressor(n_estimators=100, random_state=42)
+                scoring_func = f_regression
+            
+            selector = SelectKBest(score_func=scoring_func, k=n_features)
+            X_selected = selector.fit_transform(X, y)
+            selected_features = [features[i] for i in range(len(features)) if selector.get_support()[i]]
         
-        # Select top features
-        selected_features = [feat for feat, score in feature_importance[:n_features]]
-        X_selected = X[:, [features.index(feat) for feat in selected_features]]
+        else:
+            # Default to top features
+            selected_features = features[:n_features]
+            X_selected = X[:, :n_features]
         
-    elif method.lower() == 'correlation_analysis':
-        # Remove highly correlated features
-        corr_matrix = pd.DataFrame(X, columns=features).corr().abs()
-        upper_tri = corr_matrix.where(
-            np.triu(np.ones(corr_matrix.shape), k=1).astype(bool)
-        )
+        # Train model with selected features
+        model_info = train_xgboost_model(X_selected, y, selected_features, 
+                                       'classification' if target_type == 'price_direction' else 'regression')
         
-        # Find features with correlation > threshold
-        to_drop = [column for column in upper_tri.columns if any(upper_tri[column] > 0.8)]
-        selected_features = [feat for feat in features if feat not in to_drop]
-        X_selected = pd.DataFrame(X, columns=features)[selected_features].values
+        return selected_features, {'score': model_info['metrics'].get('test_r2', model_info['metrics'].get('test_accuracy', 0))}
         
-    else:  # SelectKBest
-        selector = SelectKBest(score_func=f_regression, k=n_features)
-        X_selected = selector.fit_transform(X, y)
-        selected_features = [features[i] for i in range(len(features)) if selector.get_support()[i]]
-    
-    # Evaluate selected features
-    from sklearn.model_selection import cross_val_score
-    model = xgb.XGBRegressor(n_estimators=100, random_state=42)
-    scores = cross_val_score(model, X_selected, y, cv=5, scoring='r2')
-    
-    return selected_features, {
-        'score': scores.mean(),
-        'score_std': scores.std(),
-        'n_features': len(selected_features)
-    }
+    except Exception as e:
+        print(f"Feature selection failed: {e}")
+        return [], {'score': 0}
 
-def compare_models(data, target_type, horizon, model_names):
+def compare_models(training_data, target_type, horizon, models_to_compare):
     """
-    Compare performance of different model types
+    Compare different model types
     """
-    from sklearn.ensemble import RandomForestRegressor
-    from sklearn.neural_network import MLPRegressor
-    from sklearn.model_selection import cross_val_score
-    import xgboost as xgb
-    
-    # Ensure we have a DataFrame
-    if isinstance(data, np.ndarray):
-        raise ValueError("Data must be a pandas DataFrame for model comparison")
-    
-    # Prepare data
-    X, y, features = prepare_ml_dataset(data, target_type, horizon)
-    
-    # Define models
-    models = {}
-    
-    if 'XGBoost' in model_names:
-        models['XGBoost'] = xgb.XGBRegressor(
-            n_estimators=200,
-            max_depth=6,
-            learning_rate=0.1,
-            random_state=42
-        )
-    
-    if 'Random Forest' in model_names:
-        models['Random Forest'] = RandomForestRegressor(
-            n_estimators=200,
-            max_depth=10,
-            random_state=42,
-            n_jobs=-1
-        )
-    
-    if 'Neural Network' in model_names:
-        models['Neural Network'] = MLPRegressor(
-            hidden_layer_sizes=(100, 50),
-            max_iter=500,
-            random_state=42,
-            early_stopping=True
-        )
-    
-    # Compare models
-    results = {}
-    for name, model in models.items():
-        try:
-            # Cross-validation scores
-            cv_scores = cross_val_score(model, X, y, cv=5, scoring='r2')
-            
-            # Fit model for additional metrics
-            split_idx = int(len(X) * 0.8)
-            X_train, X_test = X[:split_idx], X[split_idx:]
-            y_train, y_test = y[:split_idx], y[split_idx:]
-            
-            model.fit(X_train, y_train)
-            y_pred = model.predict(X_test)
-            
-            from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
-            
-            results[name] = {
-                'cv_r2_mean': cv_scores.mean(),
-                'cv_r2_std': cv_scores.std(),
-                'test_r2': r2_score(y_test, y_pred),
-                'test_rmse': np.sqrt(mean_squared_error(y_test, y_pred)),
-                'test_mae': mean_absolute_error(y_test, y_pred)
-            }
-            
-        except Exception as e:
-            results[name] = {'error': str(e)}
-    
-    return results
+    try:
+        from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
+        from sklearn.model_selection import train_test_split
+        from sklearn.metrics import r2_score, accuracy_score
+        
+        # Prepare dataset
+        X, y, features = prepare_ml_dataset(training_data, target_type, horizon)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        
+        results = {}
+        
+        for model_name in models_to_compare:
+            try:
+                if model_name == "XGBoost":
+                    model_info = train_xgboost_model(X, y, features, 
+                                                   'classification' if target_type == 'price_direction' else 'regression')
+                    results[model_name] = model_info['metrics']
+                
+                elif model_name == "Random Forest":
+                    if target_type == 'price_direction':
+                        model = RandomForestClassifier(n_estimators=100, random_state=42)
+                        model.fit(X_train, y_train)
+                        y_pred = model.predict(X_test)
+                        score = accuracy_score(y_test, y_pred)
+                        results[model_name] = {'test_accuracy': score}
+                    else:
+                        model = RandomForestRegressor(n_estimators=100, random_state=42)
+                        model.fit(X_train, y_train)
+                        y_pred = model.predict(X_test)
+                        score = r2_score(y_test, y_pred)
+                        results[model_name] = {'test_r2': score}
+                
+                # Add more models as needed
+                
+            except Exception as model_error:
+                print(f"Error training {model_name}: {model_error}")
+                results[model_name] = {'test_r2': 0, 'test_accuracy': 0}
+        
+        return results
+        
+    except Exception as e:
+        print(f"Model comparison failed: {e}")
+        return {}
 
-def advanced_feature_engineering(data, add_technical_indicators=True, add_time_features=True, add_regime_features=True):
+def optimize_hyperparameters(X, y, features, model_type='regression', n_trials=50):
     """
-    Apply advanced feature engineering techniques
+    Optimize hyperparameters using simple grid search
     """
-    # Ensure we have a DataFrame
-    if isinstance(data, np.ndarray):
-        raise ValueError("Data must be a pandas DataFrame for advanced feature engineering")
-    
-    enhanced_data = data.copy()
-    
-    if add_technical_indicators:
-        # RSI
-        def calculate_rsi(prices, window=14):
-            delta = prices.diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
-            rs = gain / loss
-            rsi = 100 - (100 / (1 + rs))
-            return rsi
+    try:
+        from sklearn.model_selection import cross_val_score
+        import xgboost as xgb
         
-        enhanced_data['rsi'] = calculate_rsi(enhanced_data['close'])
+        print(f"🔧 Optimizing hyperparameters with {n_trials} trials...")
         
-        # MACD
-        ema_12 = enhanced_data['close'].ewm(span=12).mean()
-        ema_26 = enhanced_data['close'].ewm(span=26).mean()
-        enhanced_data['macd'] = ema_12 - ema_26
-        enhanced_data['macd_signal'] = enhanced_data['macd'].ewm(span=9).mean()
+        # Define parameter grid
+        param_grid = [
+            {'n_estimators': 100, 'max_depth': 6, 'learning_rate': 0.1, 'subsample': 0.8},
+            {'n_estimators': 200, 'max_depth': 4, 'learning_rate': 0.05, 'subsample': 0.9},
+            {'n_estimators': 150, 'max_depth': 8, 'learning_rate': 0.08, 'subsample': 0.85},
+            {'n_estimators': 300, 'max_depth': 5, 'learning_rate': 0.03, 'subsample': 0.8},
+            {'n_estimators': 250, 'max_depth': 7, 'learning_rate': 0.06, 'subsample': 0.9},
+            {'n_estimators': 180, 'max_depth': 3, 'learning_rate': 0.12, 'subsample': 0.85}
+        ]
         
-        # Bollinger Bands
-        rolling_mean = enhanced_data['close'].rolling(window=20).mean()
-        rolling_std = enhanced_data['close'].rolling(window=20).std()
-        enhanced_data['bb_upper'] = rolling_mean + (rolling_std * 2)
-        enhanced_data['bb_lower'] = rolling_mean - (rolling_std * 2)
-        enhanced_data['bb_width'] = enhanced_data['bb_upper'] - enhanced_data['bb_lower']
-    
-    if add_time_features:
-        # Time-based features
-        enhanced_data['hour'] = enhanced_data.index.hour
-        enhanced_data['day_of_week'] = enhanced_data.index.dayofweek
-        enhanced_data['month'] = enhanced_data.index.month
-        enhanced_data['quarter'] = enhanced_data.index.quarter
-    
-    if add_regime_features:
-        # Volatility regime (high/low volatility periods)
-        enhanced_data['volatility'] = enhanced_data['close'].rolling(window=20).std()
-        vol_median = enhanced_data['volatility'].median()
-        enhanced_data['high_vol_regime'] = (enhanced_data['volatility'] > vol_median).astype(int)
+        best_score = -np.inf
+        best_params = None
+        best_model = None
         
-        # Trend regime (bull/bear market)
-        enhanced_data['trend_20'] = enhanced_data['close'].rolling(window=20).mean()
-        enhanced_data['trend_50'] = enhanced_data['close'].rolling(window=50).mean()
-        enhanced_data['bull_regime'] = (enhanced_data['trend_20'] > enhanced_data['trend_50']).astype(int)
-    
-    # Remove any NaN values created by rolling calculations
-    enhanced_data = enhanced_data.dropna()
-    
-    return enhanced_data
+        for params in param_grid[:min(len(param_grid), n_trials//10 + 1)]:
+            try:
+                if model_type == 'regression':
+                    model = xgb.XGBRegressor(**params, random_state=42)
+                    cv_scores = cross_val_score(model, X, y, cv=3, scoring='r2')
+                else:
+                    model = xgb.XGBClassifier(**params, random_state=42)
+                    cv_scores = cross_val_score(model, X, y, cv=3, scoring='accuracy')
+                
+                mean_score = cv_scores.mean()
+                
+                if mean_score > best_score:
+                    best_score = mean_score
+                    best_params = params
+                    best_model = model
+                    
+            except Exception as e:
+                continue
+        
+        if best_params:
+            print(f"✅ Best hyperparameters found: {best_params}")
+            print(f"✅ Best CV score: {best_score:.4f}")
+            return best_params, best_score, best_model
+        else:
+            print("⚠️ No valid hyperparameters found, using defaults")
+            return None, None, None
+            
+    except Exception as e:
+        print(f"❌ Hyperparameter optimization failed: {e}")
+        return None, None, None
+
+def create_enhanced_features(data):
+    """
+    Create enhanced features with more technical indicators
+    """
+    try:
+        df = data.copy()
+        
+        # Create basic features first
+        df_enhanced = create_comprehensive_features(df)
+        
+        print("🔬 Adding enhanced technical indicators...")
+        
+        # Advanced momentum indicators
+        df_enhanced['price_momentum_3'] = df['close'].pct_change(periods=3)
+        df_enhanced['price_momentum_5'] = df['close'].pct_change(periods=5)
+        df_enhanced['price_momentum_10'] = df['close'].pct_change(periods=10)
+        
+        # Volume analysis
+        df_enhanced['volume_sma_10'] = df['volume'].rolling(10).mean()
+        df_enhanced['volume_sma_20'] = df['volume'].rolling(20).mean()
+        df_enhanced['volume_ratio_10_20'] = df_enhanced['volume_sma_10'] / df_enhanced['volume_sma_20']
+        df_enhanced['volume_spike'] = (df['volume'] > df['volume'].rolling(20).mean() * 2).astype(int)
+        
+        # Price ratios and spreads
+        df_enhanced['high_low_ratio'] = df['high'] / df['low']
+        df_enhanced['close_open_ratio'] = df['close'] / df['open']
+        df_enhanced['hl_spread'] = (df['high'] - df['low']) / df['close']
+        df_enhanced['co_spread'] = (df['close'] - df['open']) / df['open']
+        
+        # Volatility measures
+        df_enhanced['volatility_5'] = df['close'].rolling(5).std()
+        df_enhanced['volatility_10'] = df['close'].rolling(10).std()
+        df_enhanced['volatility_20'] = df['close'].rolling(20).std()
+        df_enhanced['volatility_ratio'] = df_enhanced['volatility_5'] / df_enhanced['volatility_20']
+        
+        # Price position indicators
+        df_enhanced['price_position_5'] = (df['close'] - df['close'].rolling(5).min()) / (df['close'].rolling(5).max() - df['close'].rolling(5).min())
+        df_enhanced['price_position_20'] = (df['close'] - df['close'].rolling(20).min()) / (df['close'].rolling(20).max() - df['close'].rolling(20).min())
+        
+        # Clean up
+        df_enhanced = df_enhanced.replace([np.inf, -np.inf], np.nan)
+        df_enhanced = df_enhanced.dropna()
+        
+        print(f"✅ Enhanced features created. Total features: {len(df_enhanced.columns)}")
+        return df_enhanced
+        
+    except Exception as e:
+        print(f"❌ Enhanced feature creation failed: {e}")
+        return create_comprehensive_features(data)  # Fallback to basic features
+
+def compare_models(X, y, features, model_type='regression'):
+    """
+    Compare different model types and return the best one
+    """
+    try:
+        from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
+        from sklearn.linear_model import LinearRegression, LogisticRegression
+        from sklearn.model_selection import cross_val_score
+        import xgboost as xgb
+        
+        print("🏆 Comparing different model types...")
+        
+        models = {}
+        scores = {}
+        
+        # XGBoost (baseline)
+        if model_type == 'regression':
+            models['XGBoost'] = xgb.XGBRegressor(n_estimators=100, random_state=42)
+            models['RandomForest'] = RandomForestRegressor(n_estimators=100, random_state=42)
+            models['LinearRegression'] = LinearRegression()
+            scoring = 'r2'
+        else:
+            models['XGBoost'] = xgb.XGBClassifier(n_estimators=100, random_state=42)
+            models['RandomForest'] = RandomForestClassifier(n_estimators=100, random_state=42)
+            models['LogisticRegression'] = LogisticRegression(random_state=42, max_iter=1000)
+            scoring = 'accuracy'
+        
+        # Test each model
+        for name, model in models.items():
+            try:
+                cv_scores = cross_val_score(model, X, y, cv=3, scoring=scoring)
+                scores[name] = cv_scores.mean()
+                print(f"✅ {name}: {scores[name]:.4f}")
+            except Exception as e:
+                print(f"❌ {name} failed: {e}")
+                scores[name] = -np.inf
+        
+        # Find best model
+        best_model_name = max(scores, key=scores.get)
+        best_score = scores[best_model_name]
+        best_model = models[best_model_name]
+        
+        print(f"🏆 Best model: {best_model_name} with score {best_score:.4f}")
+        
+        return best_model_name, best_model, best_score
+        
+    except Exception as e:
+        print(f"❌ Model comparison failed: {e}")
+        return 'XGBoost', None, 0
 
 def run_training_pipeline(symbol, start_date, end_date, interval='1d', target_type='price_diff_pct', 
                          horizon=1, model_type='regression', save_model_path=None, api_key=None):
@@ -937,3 +956,87 @@ def run_training_pipeline(symbol, start_date, end_date, interval='1d', target_ty
     except Exception as e:
         print(f"❌ Training pipeline failed: {e}")
         raise e
+
+def save_optimized_model(model_info, symbol, optimization_mode, save_dir="models"):
+    """
+    Automatically save optimized model with metadata
+    """
+    try:
+        # Ensure models directory exists
+        os.makedirs(save_dir, exist_ok=True)
+        
+        # Generate filename with timestamp and optimization info
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        model_type = model_info.get('model_type', 'regression')
+        performance = model_info['metrics'].get('test_r2', model_info['metrics'].get('test_accuracy', 0))
+        
+        filename = f"{symbol}_{model_type}_{optimization_mode}_{timestamp}_perf{performance:.3f}.pkl"
+        filepath = os.path.join(save_dir, filename)
+        
+        # Add metadata to model_info
+        model_info['save_metadata'] = {
+            'symbol': symbol,
+            'optimization_mode': optimization_mode,
+            'save_timestamp': timestamp,
+            'performance_score': performance,
+            'filename': filename
+        }
+        
+        # Save the model
+        joblib.dump(model_info, filepath)
+        
+        print(f"✅ Optimized model saved: {filepath}")
+        return filepath
+        
+    except Exception as e:
+        print(f"❌ Error saving optimized model: {e}")
+        return None
+
+def load_optimized_model(filepath):
+    """
+    Load optimized model with validation
+    """
+    try:
+        model_info = joblib.load(filepath)
+        
+        # Validate model structure
+        required_keys = ['model', 'features', 'metrics', 'model_type']
+        if not all(key in model_info for key in required_keys):
+            raise ValueError("Invalid model file structure")
+        
+        print(f"✅ Optimized model loaded: {filepath}")
+        return model_info
+        
+    except Exception as e:
+        print(f"❌ Error loading optimized model: {e}")
+        return None
+
+def list_saved_models(save_dir="models"):
+    """
+    List all saved optimized models with metadata
+    """
+    try:
+        if not os.path.exists(save_dir):
+            return []
+        
+        models = []
+        for filename in os.listdir(save_dir):
+            if filename.endswith('.pkl'):
+                filepath = os.path.join(save_dir, filename)
+                try:
+                    # Try to load metadata without loading full model
+                    model_info = joblib.load(filepath)
+                    if 'save_metadata' in model_info:
+                        metadata = model_info['save_metadata'].copy()
+                        metadata['filepath'] = filepath
+                        metadata['file_size'] = os.path.getsize(filepath) / 1024  # KB
+                        models.append(metadata)
+                except:
+                    # Skip corrupted files
+                    continue
+        
+        return sorted(models, key=lambda x: x['save_timestamp'], reverse=True)
+        
+    except Exception as e:
+        print(f"❌ Error listing models: {e}")
+        return []
