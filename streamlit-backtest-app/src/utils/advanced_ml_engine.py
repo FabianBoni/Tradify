@@ -22,6 +22,7 @@ import json
 import joblib
 import warnings
 warnings.filterwarnings('ignore')
+import os
 
 # ML Libraries
 import xgboost as xgb
@@ -52,7 +53,12 @@ except ImportError:
     BAYESIAN_OPT_AVAILABLE = False
 
 # Technical Analysis
-import ta
+try:
+    import ta
+    TA_AVAILABLE = True
+except ImportError:
+    TA_AVAILABLE = False
+    print("Warning: ta library not available. Technical indicators will be limited.")
 
 class AdvancedMLEngine:
     """
@@ -160,11 +166,46 @@ class AdvancedMLEngine:
         
         self.logger.info(f"✅ Feature Engineering abgeschlossen: {len(feature_cols)} Features, {len(features)} Samples")
         
-        return features, target
+        return features, target    
     
     def _add_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Fügt technische Indikatoren hinzu"""
         
+        # Standardize column names to lowercase for consistent access
+        df = df.copy()
+        df.columns = [col.lower() for col in df.columns]
+        
+        if not TA_AVAILABLE:
+            # Fallback to simple technical indicators without ta library
+            self.logger.warning("ta library not available. Using basic technical indicators.")
+            
+            # Simple Moving Averages
+            df['sma_10'] = df['close'].rolling(10).mean()
+            df['sma_20'] = df['close'].rolling(20).mean()
+            df['sma_50'] = df['close'].rolling(50).mean()
+            
+            # Simple Exponential Moving Averages
+            df['ema_12'] = df['close'].ewm(span=12).mean()
+            df['ema_26'] = df['close'].ewm(span=26).mean()
+            
+            # Simple RSI calculation
+            delta = df['close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            df['rsi'] = 100 - (100 / (1 + rs))
+            
+            # Basic Bollinger Bands
+            df['bb_mid'] = df['close'].rolling(20).mean()
+            bb_std = df['close'].rolling(20).std()
+            df['bb_high'] = df['bb_mid'] + (2 * bb_std)
+            df['bb_low'] = df['bb_mid'] - (2 * bb_std)
+            df['bb_width'] = (df['bb_high'] - df['bb_low']) / df['bb_mid']
+            df['bb_position'] = (df['close'] - df['bb_low']) / (df['bb_high'] - df['bb_low'])
+            
+            return df
+        
+        # Full technical indicators with ta library
         # Trend Indicators
         df['sma_10'] = ta.trend.sma_indicator(df['close'], window=10)
         df['sma_20'] = ta.trend.sma_indicator(df['close'], window=20)
@@ -190,9 +231,8 @@ class AdvancedMLEngine:
         df['williams_r'] = ta.momentum.williams_r(df['high'], df['low'], df['close'])
         df['cci'] = ta.trend.cci(df['high'], df['low'], df['close'])
         df['roc'] = ta.momentum.roc(df['close'], window=10)
-        
-        # Volume Indicators
-        df['volume_sma'] = ta.volume.volume_sma(df['close'], df['volume'])
+          # Volume Indicators
+        df['volume_sma'] = df['volume'].rolling(window=20).mean()  # Simple manual volume SMA
         df['mfi'] = ta.volume.money_flow_index(df['high'], df['low'], df['close'], df['volume'])
         df['adi'] = ta.volume.acc_dist_index(df['high'], df['low'], df['close'], df['volume'])
         df['obv'] = ta.volume.on_balance_volume(df['close'], df['volume'])
@@ -326,6 +366,11 @@ class AdvancedMLEngine:
         elif target_type == "regression":
             # Regression: prozentuale Preisveränderung
             target = df['close'].shift(-horizon) / df['close'] - 1
+            
+        elif target_type == "price_direction":
+            # Price direction: 1 for upward movement, 0 for downward
+            future_return = df['close'].shift(-horizon) / df['close'] - 1
+            target = (future_return > 0).astype(int)
             
         else:
             raise ValueError(f"Unbekannter target_type: {target_type}")

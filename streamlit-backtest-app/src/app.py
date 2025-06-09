@@ -38,9 +38,82 @@ with tab1:
                                    help="Get free API key from cryptocompare.com")
             use_crypto_data = st.checkbox("Force CryptoCompare API", 
                                         help="Use CryptoCompare even for traditional assets")
+          # Enhanced Asset Selection
+        st.subheader("💰 Asset Selection")
         
-        # Stock selection
-        symbol = st.text_input("Asset Symbol", value="BTC", help="Enter crypto (BTC, ETH) or stock ticker (AAPL, GOOGL)")
+        # Asset category selection
+        asset_category = st.selectbox(
+            "Asset Category",
+            ["🪙 Cryptocurrencies", "📈 Stocks", "📋 Manual Input"],
+            help="Choose category for predefined options"
+        )
+        
+        if asset_category == "🪙 Cryptocurrencies":
+            # Popular crypto symbols with descriptions
+            crypto_options = {
+                "BTC": "Bitcoin - The first and largest cryptocurrency",
+                "ETH": "Ethereum - Smart contract platform",
+                "XRP": "Ripple - Digital payment system",
+                "ADA": "Cardano - Proof-of-stake blockchain",
+                "DOT": "Polkadot - Multi-chain protocol",
+                "LINK": "Chainlink - Oracle network",
+                "UNI": "Uniswap - Decentralized exchange",
+                "AAVE": "Aave - DeFi lending protocol",
+                "DOGE": "Dogecoin - Popular meme coin",
+                "LTC": "Litecoin - Digital silver"
+            }
+            
+            selected_crypto = st.selectbox(
+                "Select Cryptocurrency",
+                list(crypto_options.keys()),
+                help="Popular cryptocurrencies for trading analysis"
+            )
+            
+            # Show description
+            with st.expander("ℹ️ Asset Information"):
+                st.info(f"**{selected_crypto}**: {crypto_options[selected_crypto]}")
+            symbol = selected_crypto
+            
+        elif asset_category == "📈 Stocks":
+            # Popular stock symbols
+            stock_options = {
+                "AAPL": "Apple Inc. - Technology",
+                "GOOGL": "Alphabet Inc. - Technology", 
+                "TSLA": "Tesla Inc. - Electric vehicles",
+                "MSFT": "Microsoft Corp. - Software",
+                "NVDA": "NVIDIA Corp. - Semiconductors",
+                "META": "Meta Platforms - Social media",
+                "AMZN": "Amazon.com - E-commerce",
+                "NFLX": "Netflix Inc. - Streaming"
+            }
+            
+            selected_stock = st.selectbox(
+                "Select Stock",
+                list(stock_options.keys()),
+                help="Popular stocks for trading analysis"
+            )
+            
+            with st.expander("ℹ️ Asset Information"):
+                st.info(f"**{selected_stock}**: {stock_options[selected_stock]}")
+            symbol = selected_stock
+            
+        else:  # Manual input
+            symbol = st.text_input(
+                "Asset Symbol", 
+                value="BTC", 
+                help="Enter crypto (BTC, ETH) or stock ticker (AAPL, GOOGL)"
+            )
+            
+            # Symbol validation
+            if symbol:
+                symbol_upper = symbol.upper()
+                if len(symbol_upper) < 2 or len(symbol_upper) > 8:
+                    st.warning("⚠️ Symbol should be 2-8 characters long")
+                elif not symbol_upper.replace('-', '').replace('.', '').isalpha():
+                    st.warning("⚠️ Symbol should contain only letters (and optionally '-' or '.')")
+                else:
+                    st.success(f"✅ Using symbol: {symbol_upper}")
+                    symbol = symbol_upper
         
         # Data interval
         data_interval = st.selectbox("Data Interval", ["1h", "1d"], help="1h for crypto, 1d for stocks")

@@ -40,14 +40,58 @@ class ModelDevelopmentPipeline:
         - **Modellauswahl & Hyperparameter-Tuning** 🎯
         - **Echtzeit-Monitoring** 📈
         - **Vollständige Dokumentation** 📝
-        """)
-        
+        """)        # Remove unnecessary backtesting elements
         # Sidebar Configuration
         with st.sidebar:
             st.subheader("🎛️ Pipeline Konfiguration")
-            
-            # Asset und Zeitraum
-            symbol = st.text_input("Asset Symbol", value="BTC", help="z.B. BTC, ETH, AAPL")
+            st.subheader("💰 Asset Auswahl")
+            symbol = "BTC"  # Default symbol
+            asset_category = st.selectbox(
+                "Asset Kategorie",
+                ["🪙 Kryptowährungen", "📈 Aktien", "📋 Manuell"],
+                help="Wähle eine Kategorie für vordefinierten Optionen"
+            )
+            if asset_category == "🪙 Kryptowährungen":
+                crypto_options = {
+                    "BTC": "Bitcoin",
+                    "ETH": "Ethereum",
+                    "XRP": "Ripple",
+                    "ADA": "Cardano",
+                    "DOT": "Polkadot",
+                    "LINK": "Chainlink",
+                    "UNI": "Uniswap",
+                    "AAVE": "Aave",
+                    "DOGE": "Dogecoin",
+                    "LTC": "Litecoin"
+                }
+                selected_crypto = st.selectbox("Kryptowährung wählen", list(crypto_options.keys()))
+                symbol = selected_crypto
+            elif asset_category == "📈 Aktien":
+                stock_options = {
+                    "AAPL": "Apple",
+                    "GOOGL": "Alphabet",
+                    "TSLA": "Tesla",
+                    "MSFT": "Microsoft",
+                    "NVDA": "NVIDIA",
+                    "META": "Meta",
+                    "AMZN": "Amazon",
+                    "NFLX": "Netflix"
+                }
+                selected_stock = st.selectbox("Aktie wählen", list(stock_options.keys()))
+                symbol = selected_stock
+            else:
+                symbol = st.text_input("Asset Symbol", value="BTC")
+                
+                # Symbol validation
+                if symbol:
+                    symbol_upper = symbol.upper()
+                    if len(symbol_upper) < 2 or len(symbol_upper) > 8:
+                        st.warning("⚠️ Symbol sollte 2-8 Zeichen lang sein")
+                    elif not symbol_upper.isalpha():
+                        st.warning("⚠️ Symbol sollte nur Buchstaben enthalten")
+                    else:
+                        st.success(f"✅ Symbol: {symbol_upper}")
+                        symbol = symbol_upper
             
             col1, col2 = st.columns(2)
             with col1:

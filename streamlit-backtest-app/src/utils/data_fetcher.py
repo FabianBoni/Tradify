@@ -22,8 +22,12 @@ class DataFetcher:
         """
         if end_date is None:
             end_date = datetime.now()
+        
+        # Handle different date formats for display
+        start_display = start_date.date() if hasattr(start_date, 'date') else start_date
+        end_display = end_date.date() if hasattr(end_date, 'date') else end_date
             
-        print(f"🔄 Fetching {symbol} data from {start_date.date()} to {end_date.date()} using pagination...")
+        print(f"🔄 Fetching {symbol} data from {start_display} to {end_display} using pagination...")
         
         # Map intervals
         interval_map = {
@@ -32,21 +36,35 @@ class DataFetcher:
             '4h': 'histohour',  # Use hourly with aggregate
             '5m': 'histominute'
         }
-        
+          
         endpoint = interval_map.get(interval, 'histoday')
         url = f"{self.base_url}/{endpoint}"
-        
         headers = {"authorization": f"Apikey {self.cryptocompare_api_key}"} if self.cryptocompare_api_key else {}
         
         all_data = []
-        current_to_ts = int(end_date.timestamp())
+        
+        # Convert date objects to datetime for timestamp calculation
+        if hasattr(end_date, 'timestamp'):
+            current_to_ts = int(end_date.timestamp())
+        else:
+            # Convert date to datetime if needed
+            end_datetime = datetime.combine(end_date, datetime.min.time()) if hasattr(end_date, 'year') else end_date
+            current_to_ts = int(end_datetime.timestamp())
+            
+        # Also ensure start_date has timestamp capability for comparison
+        if hasattr(start_date, 'timestamp'):
+            start_timestamp = start_date.timestamp()
+        else:
+            start_datetime = datetime.combine(start_date, datetime.min.time()) if hasattr(start_date, 'year') else start_date
+            start_timestamp = start_datetime.timestamp()
+        
         batch_count = 0
         max_batches = 50  # Allow more batches for complete historical data
         
         # Set aggregate for 4h interval
         aggregate = 4 if interval == '4h' else 1
         
-        while current_to_ts > start_date.timestamp() and batch_count < max_batches:
+        while current_to_ts > start_timestamp and batch_count < max_batches:
             batch_count += 1
             
             params = {
@@ -75,14 +93,15 @@ class DataFetcher:
                                 last_date = datetime.fromtimestamp(valid_data[-1]['time'])
                                 
                                 print(f"  Batch {batch_count}: {len(valid_data)} points ({first_date.date()} to {last_date.date()})")
-                                
-                                # Add new data (avoid duplicates)
+                                  # Add new data (avoid duplicates)
                                 existing_timestamps = {d['time'] for d in all_data}
                                 new_data = [d for d in valid_data if d['time'] not in existing_timestamps]
                                 all_data.extend(new_data)
                                 
                                 # Check if we've reached target
-                                if first_date <= start_date:
+                                # Convert both to datetime for proper comparison
+                                start_datetime_for_comparison = start_date if hasattr(start_date, 'timestamp') else datetime.combine(start_date, datetime.min.time())
+                                if first_date <= start_datetime_for_comparison:
                                     print(f"  ✅ Reached target start date!")
                                     break
                                 
@@ -115,14 +134,18 @@ class DataFetcher:
             
             # Rate limiting
             time.sleep(1)
-        
+          
         if all_data:
             # Convert to DataFrame
             df = pd.DataFrame(all_data)
             df['timestamp'] = pd.to_datetime(df['time'], unit='s')
             
+            # Convert date objects to pandas Timestamp for proper comparison
+            start_ts = pd.Timestamp(start_date)
+            end_ts = pd.Timestamp(end_date) if end_date else pd.Timestamp.now()
+            
             # Filter to exact date range
-            df = df[(df['timestamp'] >= start_date) & (df['timestamp'] <= end_date)]
+            df = df[(df['timestamp'] >= start_ts) & (df['timestamp'] <= end_ts)]
             
             # Prepare OHLCV format
             df = df.rename(columns={
@@ -202,9 +225,13 @@ class DataFetcher:
             start_date = datetime.strptime(start_date, "%Y-%m-%d")
         if isinstance(end_date, str):
             end_date = datetime.strptime(end_date, "%Y-%m-%d")
-        
         print(f"\n📊 Fetching {symbol} historical data")
-        print(f"Period: {start_date.date()} to {(end_date or datetime.now()).date()}")
+        
+        # Handle different date formats for display
+        start_display = start_date.date() if hasattr(start_date, 'date') else start_date
+        end_display = (end_date.date() if hasattr(end_date, 'date') else end_date) if end_date else datetime.now().date()
+        
+        print(f"Period: {start_display} to {end_display}")
         print(f"Interval: {interval}")
         
         # Detect if crypto symbol
@@ -221,15 +248,16 @@ class DataFetcher:
         if df.empty or len(df) < 100:
             print("🔄 Trying Yahoo Finance...")
             df = self.fetch_yahoo_finance(symbol, start_date, end_date, interval)
-        
-        # Final validation
+          # Final validation
         if not df.empty:
             # Remove any remaining invalid data
             df = df[(df['Close'] > 0) & (df['Open'] > 0)].copy()
             df = df.sort_index()
             
-            # Coverage analysis
-            requested_days = (end_date - start_date).days if end_date else (datetime.now() - start_date).days
+            # Coverage analysis - ensure proper date handling
+            start_dt = pd.Timestamp(start_date)
+            end_dt = pd.Timestamp(end_date) if end_date else pd.Timestamp.now()
+            requested_days = (end_dt - start_dt).days
             actual_days = len(df)
             coverage = (actual_days / requested_days) * 100 if requested_days > 0 else 0
             
