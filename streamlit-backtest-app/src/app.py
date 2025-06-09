@@ -28,25 +28,35 @@ with tab1:
     st.title("📈 Trading Strategy Backtester")
     st.markdown("Test your trading strategies with historical data")
 
-    # Sidebar for parameters
-    with st.sidebar:
-        st.header("Configuration")
-        
+    # Main configuration in content area instead of sidebar
+    st.subheader("🎛️ Configuration")
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
         # API Configuration
         with st.expander("🔧 API Settings"):
             api_key = st.text_input("CryptoCompare API Key (Optional)", type="password", 
                                    help="Get free API key from cryptocompare.com")
             use_crypto_data = st.checkbox("Force CryptoCompare API", 
                                         help="Use CryptoCompare even for traditional assets")
-          # Enhanced Asset Selection
-        st.subheader("💰 Asset Selection")
         
-        # Asset category selection
-        asset_category = st.selectbox(
-            "Asset Category",
-            ["🪙 Cryptocurrencies", "📈 Stocks", "📋 Manual Input"],
-            help="Choose category for predefined options"
-        )
+        # Enhanced Asset Selection
+        st.markdown("**💰 Asset Selection**")
+        
+        asset_col1, asset_col2 = st.columns(2)
+        
+        with asset_col1:
+            # Asset category selection
+            asset_category = st.selectbox(
+                "Asset Category",
+                ["🪙 Cryptocurrencies", "📈 Stocks", "📋 Manual Input"],
+                help="Choose category for predefined options"
+            )
+        
+        with asset_col2:
+            # Data interval
+            data_interval = st.selectbox("Data Interval", ["1h", "1d"], help="1h for crypto, 1d for stocks")
         
         if asset_category == "🪙 Cryptocurrencies":
             # Popular crypto symbols with descriptions
@@ -115,30 +125,27 @@ with tab1:
                     st.success(f"✅ Using symbol: {symbol_upper}")
                     symbol = symbol_upper
         
-        # Data interval
-        data_interval = st.selectbox("Data Interval", ["1h", "1d"], help="1h for crypto, 1d for stocks")
-        
         # Backtesting date range
-        st.subheader("📅 Backtesting Period")
+        st.markdown("**📅 Backtesting Period**")
         col1, col2 = st.columns(2)
         with col1:
             start_date = st.date_input("Backtest Start", value=datetime.now() - timedelta(days=90), key="backtest_start")
         with col2:
             end_date = st.date_input("Backtest End", value=datetime.now(), key="backtest_end")
-        
-        # Strategy selection
-        st.subheader("Strategy Selection")
+    
+    with col2:        # Strategy selection and parameters
+        st.markdown("**🎯 Strategy Selection**")
         strategy_options = ["Simple MA Cross", "Machine Learning", "ML with Pre-trained Model"]
         strategy_type = st.selectbox("Choose Strategy", strategy_options)
-        
-        # Strategy parameters
+          # Strategy parameters
         if strategy_type == "Simple MA Cross":
-            st.subheader("Strategy Parameters")
+            st.markdown("**⚙️ Strategy Parameters**")
             short_ma = st.slider("Short MA Period", min_value=5, max_value=50, value=10)
             long_ma = st.slider("Long MA Period", min_value=20, max_value=200, value=20)
+            date_validation_errors = []  # No validation errors for simple strategy
             
         elif strategy_type == "Machine Learning":
-            st.subheader("🎯 Training Data Period")
+            st.markdown("**🎯 Training Data Period**")
             
             # Training date range with validation
             train_col1, train_col2 = st.columns(2)
@@ -171,7 +178,7 @@ with tab1:
             
             if (train_end - train_start).days < 30:
                 date_validation_errors.append("Training period should be at least 30 days")
-            
+              # Display validation results
             if date_validation_errors:
                 for error in date_validation_errors:
                     st.error(f"❌ {error}")
@@ -182,17 +189,17 @@ with tab1:
                 training_days = (train_end - train_start).days
                 st.info(f"📊 Training period: {training_days} days")
             
-            st.subheader("ML Strategy Parameters")
+            st.markdown("**🤖 ML Strategy Parameters**")
             confidence_threshold = st.slider("Confidence Threshold", min_value=0.5, max_value=0.9, value=0.6, step=0.05)
             
             # ML model parameters
-            st.subheader("Model Parameters")
+            st.markdown("**⚙️ Model Parameters**")
             target_type = st.selectbox("Target Type", ["price_diff_pct", "price_direction"], key="backtest_target")
             horizon = st.slider("Prediction Horizon", min_value=1, max_value=12, value=1, key="backtest_horizon")
             model_type = st.selectbox("Model Type", ["regression", "classification"], key="backtest_model_type")
             
         else:  # ML with Pre-trained Model
-            st.subheader("Pre-trained Model")
+            st.markdown("**📁 Pre-trained Model**")
             model_file = st.file_uploader("Upload Model File", type=['pkl', 'joblib'])
             confidence_threshold = st.slider("Confidence Threshold", min_value=0.5, max_value=0.9, value=0.6, step=0.05)
             
@@ -202,11 +209,19 @@ with tab1:
                                                help="Use the model from the ML Training tab")
             else:
                 use_session_model = False
+            date_validation_errors = []  # No validation errors for pre-trained model
         
         # Backtest parameters
-        st.subheader("Backtest Parameters")
+        st.markdown("**💰 Backtest Parameters**")
         initial_cash = st.number_input("Initial Cash ($)", min_value=1000, value=10000, step=1000)
         commission = st.slider("Commission (%)", min_value=0.0, max_value=1.0, value=0.2, step=0.1) / 100
+        
+        # Disable run button if there are validation errors for ML strategy
+        can_run_backtest = True
+        if strategy_type == "Machine Learning" and date_validation_errors:
+            can_run_backtest = False
+            
+        run_backtest_btn = st.button("🚀 Run Backtest", type="primary", disabled=not can_run_backtest)
         
         # Disable run button if there are validation errors for ML strategy
         can_run_backtest = True

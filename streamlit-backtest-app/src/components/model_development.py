@@ -28,7 +28,7 @@ class ModelDevelopmentPipeline:
             'optimization': [],
             'validation': []
         }
-    
+      
     def render_development_interface(self):
         """Hauptinterface für die Modellentwicklung"""
         
@@ -40,47 +40,75 @@ class ModelDevelopmentPipeline:
         - **Modellauswahl & Hyperparameter-Tuning** 🎯
         - **Echtzeit-Monitoring** 📈
         - **Vollständige Dokumentation** 📝
-        """)        # Remove unnecessary backtesting elements
-        # Sidebar Configuration
-        with st.sidebar:
-            st.subheader("🎛️ Pipeline Konfiguration")
-            st.subheader("💰 Asset Auswahl")
-            symbol = "BTC"  # Default symbol
+        """)
+        
+        # Configuration Section in Main Area
+        st.subheader("🎛️ Pipeline Konfiguration")
+        
+        # Asset Selection
+        col1, col2, col3 = st.columns([2, 2, 1])
+        
+        with col1:
+            st.markdown("**💰 Asset Auswahl**")
             asset_category = st.selectbox(
                 "Asset Kategorie",
                 ["🪙 Kryptowährungen", "📈 Aktien", "📋 Manuell"],
                 help="Wähle eine Kategorie für vordefinierten Optionen"
             )
+            
+            # Initialize symbol with default value
+            symbol = "BTC"  # Default symbol
+            
             if asset_category == "🪙 Kryptowährungen":
+                # Popular crypto symbols with descriptions
                 crypto_options = {
-                    "BTC": "Bitcoin",
-                    "ETH": "Ethereum",
-                    "XRP": "Ripple",
-                    "ADA": "Cardano",
-                    "DOT": "Polkadot",
-                    "LINK": "Chainlink",
-                    "UNI": "Uniswap",
-                    "AAVE": "Aave",
-                    "DOGE": "Dogecoin",
-                    "LTC": "Litecoin"
+                    "BTC": "Bitcoin - Die erste und größte Kryptowährung",
+                    "ETH": "Ethereum - Smart Contract Plattform", 
+                    "XRP": "Ripple - Digitales Zahlungssystem",
+                    "ADA": "Cardano - Proof-of-Stake Blockchain",
+                    "DOT": "Polkadot - Multi-Chain Protocol",
+                    "LINK": "Chainlink - Oracle Network",
+                    "UNI": "Uniswap - Dezentrale Exchange",
+                    "AAVE": "Aave - DeFi Lending Protocol",
+                    "DOGE": "Dogecoin - Meme Coin",
+                    "LTC": "Litecoin - Digital Silver"
                 }
-                selected_crypto = st.selectbox("Kryptowährung wählen", list(crypto_options.keys()))
-                symbol = selected_crypto
+                
+                symbol = st.selectbox(
+                    "Kryptowährung wählen",
+                    list(crypto_options.keys()),
+                    help="Beliebte Kryptowährungen für ML-Trading"
+                )
+                
+                st.info(f"**{symbol}**: {crypto_options[symbol]}")
+                
             elif asset_category == "📈 Aktien":
+                # Popular stock symbols
                 stock_options = {
-                    "AAPL": "Apple",
-                    "GOOGL": "Alphabet",
-                    "TSLA": "Tesla",
-                    "MSFT": "Microsoft",
-                    "NVDA": "NVIDIA",
-                    "META": "Meta",
-                    "AMZN": "Amazon",
-                    "NFLX": "Netflix"
+                    "AAPL": "Apple Inc. - Technologie",
+                    "GOOGL": "Alphabet Inc. - Technologie", 
+                    "TSLA": "Tesla Inc. - Elektrofahrzeuge",
+                    "MSFT": "Microsoft Corp. - Software",
+                    "NVDA": "NVIDIA Corp. - Halbleiter",
+                    "META": "Meta Platforms - Social Media",
+                    "AMZN": "Amazon.com - E-Commerce",
+                    "NFLX": "Netflix Inc. - Streaming"
                 }
-                selected_stock = st.selectbox("Aktie wählen", list(stock_options.keys()))
-                symbol = selected_stock
-            else:
-                symbol = st.text_input("Asset Symbol", value="BTC")
+                
+                symbol = st.selectbox(
+                    "Aktie wählen",
+                    list(stock_options.keys()),
+                    help="Beliebte Aktien für ML-Trading"
+                )
+                
+                st.info(f"**{symbol}**: {stock_options[symbol]}")
+                
+            else:  # Manual input
+                symbol = st.text_input(
+                    "Asset Symbol", 
+                    value="BTC", 
+                    help="Manuell eingeben: z.B. BTC, ETH, AAPL"
+                )
                 
                 # Symbol validation
                 if symbol:
@@ -92,29 +120,31 @@ class ModelDevelopmentPipeline:
                     else:
                         st.success(f"✅ Symbol: {symbol_upper}")
                         symbol = symbol_upper
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                start_date = st.date_input("Start Datum", 
-                                         value=datetime.now() - timedelta(days=365*2))
-            with col2:
-                end_date = st.date_input("End Datum", 
-                                       value=datetime.now() - timedelta(days=30))
-            
+        
+        with col2:
+            st.markdown("**📅 Zeitraum & Interval**")
+            start_date = st.date_input("Start Datum", 
+                                     value=datetime.now() - timedelta(days=365*2))
+            end_date = st.date_input("End Datum", 
+                                   value=datetime.now() - timedelta(days=30))
             interval = st.selectbox("Zeitintervall", ["1h", "1d", "4h"])
-            
-            # Prediction Target
-            st.subheader("🎯 Vorhersageziel")
+        
+        with col3:
+            st.markdown("**🎯 Vorhersageziel**")
             target_type = st.selectbox("Target Type", 
                                      ["price_direction", "price_change_pct", "volatility"])
             prediction_horizon = st.slider("Vorhersage-Horizont", 1, 24, 1)
-            
-            # Automatisierungsgrad
-            st.subheader("🤖 Automatisierung")
+        
+        # Automation Settings
+        st.markdown("**🤖 Automatisierungseinstellungen**")
+        col4, col5, col6 = st.columns(3)
+        
+        with col4:
             automation_level = st.selectbox("Automatisierungsgrad", 
                                           ["Vollautomatisch", "Semi-automatisch", "Manuell"])
-            
+        with col5:
             max_experiments = st.slider("Max. Experimente", 5, 50, 20)
+        with col6:
             optimization_time = st.slider("Max. Zeit (Min)", 5, 60, 15)
             
         # Main Content Tabs
@@ -475,18 +505,18 @@ class ModelDevelopmentPipeline:
         for model_name, (model, param_grid) in models.items():
             phase_text.text(f"Optimiere {model_name}...")
             
-            try:
-                # Run randomized search
+            try:                # Run randomized search
+                n_iter_value = min(10, max_experiments // len(models))
                 search = RandomizedSearchCV(
                     model, param_grid, 
-                    n_iter=min(10, max_experiments // len(models)),
+                    n_iter=n_iter_value,
                     cv=cv, scoring='accuracy' if len(np.unique(target)) <= 10 else 'r2',
                     random_state=42, n_jobs=1  # n_jobs=1 to avoid multiprocessing issues
                 )
                 
                 search.fit(features, target)
                 
-                experiment_count += search.n_iter_
+                experiment_count += n_iter_value
                 phase_progress.progress(experiment_count / max_experiments)
                 
                 result = {
