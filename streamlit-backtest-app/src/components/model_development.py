@@ -1823,10 +1823,10 @@ class ModelDevelopmentPipeline:
             # Simulate realistic backtest execution
             for i, step in enumerate(backtest_steps):
                 backtest_status.text(f"🔄 {step}")
-                backtest_progress.progress((i + 1) / len(backtest_steps))
-
+                backtest_progress.progress((i + 1) / len(backtest_steps))                
+                
                 if step == "📊 Historische Daten laden":
-                    # Generate historical data for backtest period
+                    # Get actual historical data for backtest period
                     period_days = {
                         "3 Monate": 90,
                         "6 Monate": 180,
@@ -1835,37 +1835,91 @@ class ModelDevelopmentPipeline:
                     }
                     days = period_days.get(backtest_params["period"], 365)
 
-                    # Create realistic price data
-                    end_date = datetime.now()
-                    start_date = end_date - timedelta(days=days)
-                    date_range = pd.date_range(start=start_date, end=end_date, freq="H")
-
-                    # Simulate realistic price movements
-                    np.random.seed(42)  # For reproducible results
-                    price_changes = np.random.normal(
-                        0.0001, 0.02, len(date_range)
-                    )  # Small hourly changes
-                    prices = 100 * (1 + price_changes).cumprod()
-
-                    # Add some trends and volatility
-                    trend = np.linspace(
-                        0, 0.2, len(date_range)
-                    )  # 20% upward trend over period
-                    prices = prices * (1 + trend)
-
-                    market_data = pd.DataFrame(
-                        {
+                    # Calculate actual date range
+                    end_date_real = datetime.now() - timedelta(days=1)  # Yesterday to ensure data availability
+                    start_date_real = end_date_real - timedelta(days=days)
+                    
+                    try:
+                        # Import and use the real data fetcher
+                        from utils.data_fetcher import DataFetcher
+                        
+                        fetcher = DataFetcher()
+                        
+                        # Fetch real historical data
+                        st.info(f"📊 Lade echte Marktdaten für {symbol} ({backtest_params['period']})...")
+                        
+                        # Use daily data for backtesting (more stable and comprehensive)
+                        real_data = fetcher.fetch_historical_data(
+                            symbol, 
+                            start_date_real.date(), 
+                            end_date_real.date(), 
+                            "1d"  # Daily data for backtesting
+                        )
+                        
+                        if real_data is not None and len(real_data) > 0:
+                            # Convert to the format expected by backtest
+                            market_data = pd.DataFrame({
+                                "timestamp": real_data.index,
+                                "open": real_data["Open"],
+                                "high": real_data["High"], 
+                                "low": real_data["Low"],
+                                "close": real_data["Close"],
+                                "volume": real_data["Volume"]
+                            }).reset_index(drop=True)
+                            
+                            st.success(f"✅ {len(market_data)} echte Datenpunkte geladen für {symbol}")
+                            
+                        else:
+                            # Fallback to simulated data if real data fails
+                            st.warning(f"⚠️ Echte Daten für {symbol} nicht verfügbar, verwende Simulation...")
+                            
+                            date_range = pd.date_range(start=start_date_real, end=end_date_real, freq="D")
+                            np.random.seed(42)
+                            
+                            # Create more realistic simulation based on typical crypto/stock movements
+                            if symbol in ["BTC", "ETH", "DOGE"]:  # Crypto
+                                base_price = 50000 if symbol == "BTC" else 3000 if symbol == "ETH" else 0.5
+                                volatility = 0.04  # 4% daily volatility for crypto
+                            else:  # Stocks
+                                base_price = 150
+                                volatility = 0.02  # 2% daily volatility for stocks
+                                
+                            price_changes = np.random.normal(0.001, volatility, len(date_range))
+                            prices = base_price * (1 + price_changes).cumprod()
+                            
+                            market_data = pd.DataFrame({
+                                "timestamp": date_range,
+                                "open": prices,
+                                "high": prices * np.random.uniform(1.0, 1.03, len(prices)),
+                                "low": prices * np.random.uniform(0.97, 1.0, len(prices)),
+                                "close": prices,
+                                "volume": np.random.uniform(100000, 1000000, len(prices)),
+                            })
+                            
+                    except Exception as e:
+                        st.warning(f"⚠️ Fehler beim Laden der Daten: {str(e)}")
+                        st.info("Verwende Fallback-Simulation...")
+                        
+                        # Fallback simulation
+                        date_range = pd.date_range(start=start_date_real, end=end_date_real, freq="D")
+                        np.random.seed(42)
+                        
+                        base_price = 50000 if symbol == "BTC" else 100
+                        price_changes = np.random.normal(0.001, 0.03, len(date_range))
+                        prices = base_price * (1 + price_changes).cumprod()
+                        
+                        market_data = pd.DataFrame({
                             "timestamp": date_range,
                             "open": prices,
                             "high": prices * np.random.uniform(1.0, 1.02, len(prices)),
                             "low": prices * np.random.uniform(0.98, 1.0, len(prices)),
                             "close": prices,
-                            "volume": np.random.uniform(1000, 10000, len(prices)),
-                        }
-                    )
+                            "volume": np.random.uniform(10000, 100000, len(prices)),
+                        })
 
                     backtest_results["market_data"] = market_data
                     backtest_results["data_points"] = len(market_data)
+                    backtest_results["data_source"] = "Real Data" if 'real_data' in locals() and real_data is not None else "Simulated Data"
 
                 elif step == "🤖 Handelssignale generieren":
                     # Generate realistic trading signals using the model
