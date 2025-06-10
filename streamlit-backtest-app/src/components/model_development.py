@@ -203,51 +203,49 @@ class ModelDevelopmentPipeline:
             if os.path.exists(model_dir):
                 for file in os.listdir(model_dir):
                     if file.endswith(".pkl"):
-                        model_paths.append(os.path.join(model_dir, file))
+                        model_paths.append(os.path.join(model_dir, file))        # Always show file upload option first
+        st.markdown("**📁 Modell aus Datei laden:**")
+        uploaded_file = st.file_uploader(
+            "Lade ein Modell hoch (.pkl)",
+            type=["pkl"],
+            help="Lade eine trainierte Modell-Datei aus dem Explorer hoch",
+            key="model_file_uploader"
+        )
+
+        if uploaded_file:
+            try:
+                # Save uploaded file temporarily
+                temp_path = f"temp_model_{uploaded_file.name}"
+                with open(temp_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+
+                # Load the model
+                self.load_existing_model(temp_path, uploaded_file.name)
+
+                # Clean up
+                os.remove(temp_path)
+
+            except Exception as e:
+                st.error(f"❌ Fehler beim Laden: {str(e)}")
+
+        st.markdown("---")
 
         if not model_paths:
-            st.warning("⚠️ Keine gespeicherten Modelle gefunden.")
+            st.warning("⚠️ Keine gespeicherten Modelle in Standard-Verzeichnissen gefunden.")
             st.info(
                 """
             **Modelle werden normalerweise gespeichert in:**
             - `models/` Verzeichnis
             - `src/models/` Verzeichnis
             
-            Trainiere zuerst ein Modell oder lade eine .pkl Datei hoch.
+            Verwende den obigen Datei-Upload oder trainiere zuerst ein Modell.
             """
             )
-
-            # File upload option
-            uploaded_file = st.file_uploader(
-                "Oder lade ein Modell hoch (.pkl)",
-                type=["pkl"],
-                help="Lade eine trainierte Modell-Datei hoch",
-            )
-
-            if uploaded_file:
-                try:
-                    # Save uploaded file temporarily
-                    temp_path = f"temp_model_{uploaded_file.name}"
-                    with open(temp_path, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
-
-                    # Load the model
-                    self.load_existing_model(temp_path, uploaded_file.name)
-
-                    # Clean up
-                    os.remove(temp_path)
-
-                except Exception as e:
-                    st.error(f"❌ Fehler beim Laden: {str(e)}")
-
-            return
-
-        # Display available models
+            return        # Display available local models
+        st.markdown("**💾 Lokal gespeicherte Modelle:**")
         col1, col2 = st.columns([2, 1])
 
         with col1:
-            st.markdown("**Verfügbare Modelle:**")
-
             selected_model = st.selectbox(
                 "Modell auswählen",
                 model_paths,
@@ -1833,9 +1831,7 @@ class ModelDevelopmentPipeline:
                         "1 Jahr": 365,
                         "2 Jahre": 730,
                     }
-                    days = period_days.get(backtest_params["period"], 365)
-
-                    # Calculate actual date range
+                    days = period_days.get(backtest_params["period"], 365)                    # Calculate actual date range
                     end_date_real = datetime.now() - timedelta(days=1)  # Yesterday to ensure data availability
                     start_date_real = end_date_real - timedelta(days=days)
                     
@@ -1847,7 +1843,6 @@ class ModelDevelopmentPipeline:
                         
                         # Fetch real historical data
                         st.info(f"📊 Lade echte Marktdaten für {symbol} ({backtest_params['period']})...")
-                        
                         # Use daily data for backtesting (more stable and comprehensive)
                         real_data = fetcher.fetch_historical_data(
                             symbol, 
@@ -1868,58 +1863,23 @@ class ModelDevelopmentPipeline:
                             }).reset_index(drop=True)
                             
                             st.success(f"✅ {len(market_data)} echte Datenpunkte geladen für {symbol}")
+                            st.info(f"📊 Preisspanne: €{market_data['close'].min():.2f} - €{market_data['close'].max():.2f}")
                             
                         else:
-                            # Fallback to simulated data if real data fails
-                            st.warning(f"⚠️ Echte Daten für {symbol} nicht verfügbar, verwende Simulation...")
-                            
-                            date_range = pd.date_range(start=start_date_real, end=end_date_real, freq="D")
-                            np.random.seed(42)
-                            
-                            # Create more realistic simulation based on typical crypto/stock movements
-                            if symbol in ["BTC", "ETH", "DOGE"]:  # Crypto
-                                base_price = 50000 if symbol == "BTC" else 3000 if symbol == "ETH" else 0.5
-                                volatility = 0.04  # 4% daily volatility for crypto
-                            else:  # Stocks
-                                base_price = 150
-                                volatility = 0.02  # 2% daily volatility for stocks
-                                
-                            price_changes = np.random.normal(0.001, volatility, len(date_range))
-                            prices = base_price * (1 + price_changes).cumprod()
-                            
-                            market_data = pd.DataFrame({
-                                "timestamp": date_range,
-                                "open": prices,
-                                "high": prices * np.random.uniform(1.0, 1.03, len(prices)),
-                                "low": prices * np.random.uniform(0.97, 1.0, len(prices)),
-                                "close": prices,
-                                "volume": np.random.uniform(100000, 1000000, len(prices)),
-                            })
+                            # Throw error if API data is unavailable
+                            error_msg = f"❌ Keine echten Marktdaten für {symbol} verfügbar. API-Fehler oder Symbol nicht unterstützt."
+                            st.error(error_msg)
+                            raise ValueError(f"API data unavailable for symbol {symbol}. No fallback simulation allowed.")
                             
                     except Exception as e:
-                        st.warning(f"⚠️ Fehler beim Laden der Daten: {str(e)}")
-                        st.info("Verwende Fallback-Simulation...")
-                        
-                        # Fallback simulation
-                        date_range = pd.date_range(start=start_date_real, end=end_date_real, freq="D")
-                        np.random.seed(42)
-                        
-                        base_price = 50000 if symbol == "BTC" else 100
-                        price_changes = np.random.normal(0.001, 0.03, len(date_range))
-                        prices = base_price * (1 + price_changes).cumprod()
-                        
-                        market_data = pd.DataFrame({
-                            "timestamp": date_range,
-                            "open": prices,
-                            "high": prices * np.random.uniform(1.0, 1.02, len(prices)),
-                            "low": prices * np.random.uniform(0.98, 1.0, len(prices)),
-                            "close": prices,
-                            "volume": np.random.uniform(10000, 100000, len(prices)),
-                        })
+                        error_msg = f"❌ Kritischer Fehler beim Laden der API-Daten: {str(e)}"
+                        st.error(error_msg)
+                        st.error("🚫 System-Richtlinie: Keine Simulation als Fallback erlaubt. Nur echte API-Daten werden akzeptiert.")
+                        raise ValueError(f"Critical API data loading error: {str(e)}. No simulation fallback allowed.")
 
                     backtest_results["market_data"] = market_data
                     backtest_results["data_points"] = len(market_data)
-                    backtest_results["data_source"] = "Real Data" if 'real_data' in locals() and real_data is not None else "Simulated Data"
+                    backtest_results["data_source"] = "Real API Data"
 
                 elif step == "🤖 Handelssignale generieren":
                     # Generate realistic trading signals using the model
@@ -1974,7 +1934,8 @@ class ModelDevelopmentPipeline:
                                         "timestamp": market_data.iloc[i]["timestamp"],
                                         "type": signal_type,
                                         "confidence": confidence,
-                                        "price": market_data.iloc[i]["close"],                                    }
+                                        "price": market_data.iloc[i]["close"],
+                                    }
                                 )
 
                     backtest_results["signals"] = signals
@@ -2110,15 +2071,16 @@ class ModelDevelopmentPipeline:
 
                         win_rate = len(winning_trades) / len(trades)
                         avg_win = np.mean(winning_trades) if winning_trades else 0
-                        avg_loss = np.mean(losing_trades) if losing_trades else 0
-
-                        # Risk metrics
+                        avg_loss = np.mean(losing_trades) if losing_trades else 0                        # Risk metrics
                         returns_series = pd.Series(trade_returns)
-                        volatility = (
-                            returns_series.std() * np.sqrt(252)
-                            if len(returns_series) > 1
-                            else 0
-                        )
+                        # Fix volatility calculation - use proper trade return volatility
+                        if len(returns_series) > 1:
+                            # Calculate volatility of trade returns (not daily returns)
+                            # Trade returns are already percentage returns, not daily
+                            # So we don't need to annualize them with sqrt(252)
+                            volatility = returns_series.std()
+                        else:
+                            volatility = 0.0
 
                         # Sharpe ratio (assuming risk-free rate of 2%)
                         risk_free_rate = 0.02
@@ -2400,7 +2362,7 @@ class ModelDevelopmentPipeline:
         st.subheader("📊 Trading Statistiken")
 
         col1, col2, col3, col4 = st.columns(4)
-
+        
         with col1:
             st.metric(
                 "💵 Startkapital", f"€{results['parameters']['initial_capital']:,.0f}"
@@ -2414,14 +2376,11 @@ class ModelDevelopmentPipeline:
             )
 
         with col3:
-            if "winning_trades" in results and "losing_trades" in results:
-                winning = len([t for t in results["trades"] if t["return_pct"] > 0])
-                losing = len([t for t in results["trades"] if t["return_pct"] < 0])
-                st.metric("✅ Gewinn-Trades", f"{winning}")
-                st.metric("❌ Verlust-Trades", f"{losing}")
-            else:
-                st.metric("✅ Gewinn-Trades", "0")
-                st.metric("❌ Verlust-Trades", "0")
+            # Calculate winning and losing trades correctly
+            winning = len([t for t in results["trades"] if t["return_pct"] > 0])
+            losing = len([t for t in results["trades"] if t["return_pct"] < 0])
+            st.metric("✅ Gewinn-Trades", f"{winning}")
+            st.metric("❌ Verlust-Trades", f"{losing}")
 
         with col4:
             st.metric(
